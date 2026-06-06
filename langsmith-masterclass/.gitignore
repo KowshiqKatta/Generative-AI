@@ -40,6 +40,3 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
-
-# PDFs (if you want to exclude these)
-*.pdf
