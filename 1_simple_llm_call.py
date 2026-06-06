@@ -15,5 +15,5 @@ parser = StrOutputParser()
 chain = prompt | model | parser
 
 # Run it
-result = chain.invoke({"question": "What is the capital of Peru?"})
+result = chain.invoke({"question": "What is the capital of India?"})
 print(result)
