@@ -6,16 +6,16 @@
 
 ## 📚 Table of Contents
 
-1. [Overview](#overview)
-2. [What is a Vector Store?](#what-is-a-vector-store)
-3. [Repository Purpose & Goals](#repository-purpose--goals)
-4. [Tech Stack & Tools](#tech-stack--tools)
-5. [Core Concepts Explained](#core-concepts-explained)
-6. [Notebook Breakdown](#notebook-breakdown)
-7. [Key Takeaways](#key-takeaways)
-8. [Getting Started](#getting-started)
-9. [Workflow Architecture](#workflow-architecture)
-10. [Frequently Asked Questions](#frequently-asked-questions)
+1. [Overview](#-overview)
+2. [What is a Vector Store?](#-what-is-a-vector-store)
+3. [Repository Purpose & Goals](#-repository-purpose--goals)
+4. [Tech Stack & Tools](#-tech-stack--tools)
+5. [Core Concepts Explained](#-core-concepts-explained)
+6. [Notebook Breakdown](#-notebook-breakdown)
+7. [Key Takeaways](#-key-takeaways)
+8. [Getting Started](#-getting-started)
+9. [Workflow Architecture](#%EF%B8%8F-workflow-architecture)
+10. [Frequently Asked Questions](#-frequently-asked-questions)
 
 ---
 
