@@ -631,7 +631,7 @@ jupyter notebook
 
 ---
 
-**Created**: 2024  
+**Created**: 2026
 **Purpose**: Educational blueprint for understanding document retrievers in RAG systems  
 **Audience**: Beginners to advanced practitioners in AI/ML  
 
