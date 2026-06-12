@@ -1,6 +1,7 @@
 # RAG Retrievers: A Complete Guide to Document Retrieval in Retrieval-Augmented Generation
 
 ## 📋 Table of Contents
+
 1. [Repository Overview](#repository-overview)
 2. [What is a Retriever?](#what-is-a-retriever)
 3. [Retriever Types & Concepts](#retriever-types--concepts)
