@@ -2,14 +2,14 @@
 
 ## 📋 Table of Contents
 
-1. [Repository Overview](#repository-overview)
-2. [What is a Retriever?](#what-is-a-retriever)
-3. [Retriever Types & Concepts](#retriever-types--concepts)
-4. [Project Structure](#project-structure)
-5. [Technology Stack](#technology-stack)
-6. [Detailed Notebook Guide](#detailed-notebook-guide)
-7. [Key Takeaways](#key-takeaways)
-8. [Interview Questions](#interview-questions)
+1. [Repository Overview](#-repository-overview)
+2. [What is a Retriever?](#-what-is-a-retriever)
+3. [Retriever Types & Concepts](#-retriever-types--concepts)
+4. [Project Structure](#-project-structure)
+5. [Technology Stack](#-technology-stack)
+6. [Detailed Notebook Guide](#-detailed-notebook-guide)
+7. [Key Takeaways](#-key-takeaways)
+8. [Interview Questions](#-interview-questions)
 
 ---
 
