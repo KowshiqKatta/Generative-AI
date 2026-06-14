@@ -14,16 +14,16 @@
 
 ## 📋 Table of Contents
 
-1. [Repository Overview](#repository-overview)
-2. [Core Intention](#core-intention)
-3. [Tech Stack & Tools](#tech-stack--tools)
-4. [Key Concepts & Takeaways](#key-concepts--takeaways)
-5. [Complete Notebook Blueprint](#complete-notebook-blueprint)
-6. [Deep Dive: Each Notebook Explained](#deep-dive-each-notebook-explained)
-7. [How They Solve Real Problems](#how-they-solve-real-problems)
-8. [Learning Path](#learning-path)
-9. [Probable Interview Questions](#probable-interview-questions)
-10. [Getting Started](#getting-started)
+1. [Repository Overview](#-repository-overview)
+2. [Core Intention](#-core-intention)
+3. [Tech Stack & Tools](#-tech-stack--tools)
+4. [Key Concepts & Takeaways](#-key-concepts--takeaways)
+5. [Complete Notebook Blueprint](#-complete-notebook-blueprint)
+6. [Deep Dive: Each Notebook Explained](#-deep-dive-each-notebook-explained)
+7. [How They Solve Real Problems](#-how-they-solve-real-problems)
+8. [Learning Path](#-learning-path)
+9. [Probable Interview Questions](#-probable-interview-questions)
+10. [Getting Started](#=getting-started)
 
 ---
 
