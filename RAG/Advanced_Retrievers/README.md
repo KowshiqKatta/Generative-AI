@@ -23,7 +23,7 @@
 7. [How They Solve Real Problems](#-how-they-solve-real-problems)
 8. [Learning Path](#-learning-path)
 9. [Probable Interview Questions](#-probable-interview-questions)
-10. [Getting Started](#=getting-started)
+10. [Getting Started](#-getting-started)
 
 ---
 
