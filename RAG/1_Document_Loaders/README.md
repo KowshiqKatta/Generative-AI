@@ -1,14 +1,14 @@
 # Document Loaders in RAG - Complete Blueprint & Guide
 
 ## 📋 Table of Contents
-1. [Overview & Purpose](#-overview--purpose)
-2. [What Are Document Loaders?](#-what-are-document-loaders)
-3. [Why Document Loaders Matter in RAG](#-why-document-loaders-matter-in-rag)
-4. [Core Concepts](#-core-concepts)
-5. [Tech Stack & Tools](#-tech-stack--tools)
-6. [Detailed Loader Implementations](#-detailed-loader-implementations)
-7. [Practical Takeaways](#-practical-takeaways)
-8. [Interview Questions](#-interview-questions)
+1. [Overview & Purpose](#overview--purpose)
+2. [What Are Document Loaders?](#what-are-document-loaders)
+3. [Why Document Loaders Matter in RAG](#why-document-loaders-matter-in-rag)
+4. [Core Concepts](#core-concepts)
+5. [Tech Stack & Tools](#tech-stack--tools)
+6. [Detailed Loader Implementations](#detailed-loader-implementations)
+7. [Practical Takeaways](#practical-takeaways)
+8. [Interview Questions](#interview-questions)
 
 ---
 
