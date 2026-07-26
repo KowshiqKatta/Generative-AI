@@ -27,6 +27,7 @@ Papeer is a Retrieval-Augmented Generation (RAG) application built with LangGrap
 | **Inline Citations** | Every claim carries a bracketed `[n]` marker resolving to a numbered **Sources** list with paper titles and page numbers. Retrieved-but-uncited sources are pruned and the remainder renumbered, so the list reflects what the answer actually used |
 | **Cross-Encoder Reranking** | Vector search overfetches candidates and a local FlashRank cross-encoder reorders them before they reach the LLM — recall from the bi-encoder, precision from the cross-encoder |
 | **Live Pipeline Progress** | Each stage of the graph run (routing, searching, relevancy check, query rewrite, writing) is reported in real time in a collapsible status panel, then collapses on completion |
+| **Follow-up Awareness** | Elliptical replies ("yes please", "tell me more", "what about his other work?") are resolved into standalone questions against the conversation before routing or retrieval, so the assistant carries out what it just offered instead of asking you to restate |
 | **Claim Verification** | Ask the assistant to verify a claim — it searches the web and ArXiv to determine if the claim is current or superseded, and returns links to newer papers if applicable |
 | **Web Search** | For questions about current developments or explicit search requests, live Tavily results are incorporated |
 | **Direct Answers** | General knowledge questions are answered without retrieval or web calls |
@@ -135,7 +136,7 @@ All have working defaults; set them only to override.
 ```
 app.py (Streamlit UI)
 │
-├── backend/rag_graph.py       — LangGraph RAG workflow (router → retrieve/verify/direct → answer)
+├── backend/rag_graph.py       — LangGraph RAG workflow (contextualize → router → retrieve/verify/direct → answer)
 ├── backend/reranker.py        — Local cross-encoder reranking with graceful fallback
 ├── backend/btw_handler.py     — Off-topic /btw handler (streaming, not stored in history)
 ├── backend/vector_store.py    — Qdrant Cloud vector store with cached embeddings
@@ -147,6 +148,9 @@ app.py (Streamlit UI)
 
 ```
 User Query
+    │
+    ▼
+ Contextualize (resolve follow-ups against history → standalone question)
     │
     ▼
  Router (LLM)
@@ -168,7 +172,11 @@ User Query
 
 | Optimization | Details |
 |---|---|
+| **Multi-turn context** | The router, retrieval agent, and answer generator all operate on a conversation-resolved question rather than the raw last message. A `contextualize` node runs first and is skipped entirely on the first turn of a session, so the extra LLM call is only paid when there is history to resolve against |
+| **Scratchpad / transcript separation** | `conversation_history()` strips tool-call messages, tool results, and synthetic rewrite queries out of `state["messages"]` before any prompt sees it. Replaying tool traffic wastes tokens; replaying rewrites makes the model believe the user asked something they never asked |
+| **History window** | Prompts carry the last 10 real turns with each entry truncated for the contextualizer, bounding token growth on long sessions |
 | **Cross-encoder reranking** | Similarity search overfetches (5× the requested `k`, capped at 40) and a local FlashRank cross-encoder reorders the pool before the top `k` reach the LLM. Bi-encoders optimise recall, not precision — they put the right passage in the top 20 but rarely the top 4 — and this closes that gap without an extra API dependency |
+| **Contextualizer fails open** | If the follow-up rewrite errors, the raw message is used unchanged. A resolution failure degrades the answer; it must never block the turn |
 | **Reranker degrades gracefully** | If the model is missing or inference throws, the failure is logged and retrieval falls back to similarity order. Reranking is an optimisation, never a hard dependency |
 | **Reranker baked into the image** | The Dockerfile pre-downloads the model at build time, so a cold container doesn't stall on the first user query |
 | **Citation pruning** | Sources the model didn't cite are dropped and the rest renumbered from 1 in a single regex pass, so a swap (3→1, 1→2) can't double-map. Listing unused sources makes an answer look less grounded than it is |
@@ -233,6 +241,25 @@ uv run python evaluate.py
 ---
 
 ## Changelog
+
+### Multi-turn conversation
+
+- **`contextualize` node** at the graph entry point rewrites elliptical follow-ups into standalone
+  questions before routing. Previously `router_node` classified `state["messages"][-1]` in isolation and
+  every branch of `generate_answer_node` built its prompt from `query` alone, so “Yes, please.” reached
+  the model with no idea what it was agreeing to.
+- **`conversation_history()` / `prior_turns()`** extract the durable user→assistant transcript from
+  `state["messages"]`, excluding tool-call messages, tool results, and synthetic rewrite queries. Used by
+  the contextualizer, the answer generator, and session replay.
+- **Rewrites are tagged.** `query_rewrite_node` marks its injected `HumanMessage` with a
+  `papeer_synthetic` flag so machine-generated search queries are never replayed as user turns.
+- **`user_question` in state** preserves what the user actually asked. `query` may be overwritten by a
+  retrieval rewrite, and the final answer was previously generated against that machine query rather than
+  the real question.
+- **`agent_node` and `verify_claim_node`** now read the resolved question instead of the literal last
+  message.
+- **Session replay fixed.** `load_session_chats` reused the same transcript filter, so reloading a
+  session that used tools no longer renders empty assistant bubbles or inflates the turn counter.
 
 ### Retrieval quality and answer attribution
 

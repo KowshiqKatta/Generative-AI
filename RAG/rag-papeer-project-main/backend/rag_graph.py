@@ -40,9 +40,111 @@ class RAGState(MessagesState):
     claim_source: str | None
     superseding_papers: list[dict] | None
     answer: str | None
+    user_question: str | None
     sources: list[dict] | None
     is_relevant: bool | None
     rewrite_count: int
+
+
+# ── Conversation history ──────────────────────────────────────────────────
+
+# Appended beneath cited answers. Defined here so history extraction and
+# rendering can never drift apart.
+SOURCES_MARKER = "\n\n---\n\n**Sources**\n\n"
+
+# Marks queries this graph generated itself (rewrites), so they are never
+# replayed as though the user had typed them.
+SYNTHETIC = "papeer_synthetic"
+
+MAX_HISTORY_MESSAGES = 10
+
+
+def _strip_sources(text: str) -> str:
+    return text.split(SOURCES_MARKER)[0] if isinstance(text, str) else text
+
+
+def conversation_history(
+    messages: list,
+    limit: int | None = MAX_HISTORY_MESSAGES,
+    strip_sources: bool = True,
+) -> list[dict]:
+    """The durable user/assistant transcript, with agent scratchpad removed.
+
+    `state["messages"]` interleaves three different things: real conversation,
+    tool traffic (tool-call AIMessages and their ToolMessages), and synthetic
+    rewrite queries. Only the first belongs in a prompt — replaying tool traffic
+    wastes tokens and replaying rewrites makes the model think the user asked
+    something they never asked.
+    """
+    turns: list[dict] = []
+    for msg in messages or []:
+        kind = type(msg).__name__
+        if kind == "HumanMessage":
+            if (getattr(msg, "additional_kwargs", None) or {}).get(SYNTHETIC):
+                continue
+            turns.append({"role": "user", "content": msg.content})
+        elif kind in ("AIMessage", "AIMessageChunk"):
+            if getattr(msg, "tool_calls", None):
+                continue  # scratchpad: the model asking for a tool, not talking
+            if isinstance(msg.content, str) and msg.content.strip():
+                content = _strip_sources(msg.content) if strip_sources else msg.content
+                turns.append({"role": "assistant", "content": content})
+    return turns[-limit:] if limit else turns
+
+
+def prior_turns(messages: list) -> list[dict]:
+    """History with the current question removed — it is passed separately."""
+    turns = conversation_history(messages)
+    while turns and turns[-1]["role"] == "user":
+        turns.pop()
+    return turns
+
+
+# ── Contextualization ──────────────────────────────────────────────────────
+
+CONTEXTUALIZE_SYSTEM = (
+    "Rewrite the user's latest message into a standalone question that makes sense "
+    "without the conversation.\n\n"
+    "- Resolve pronouns and references ('it', 'that paper', 'his work') against the conversation.\n"
+    "- Expand bare confirmations ('yes please', 'go ahead', 'sure', 'tell me more') into the "
+    "specific request the assistant just offered. If the assistant offered several options and "
+    "the user agreed without choosing, fold them into one question.\n"
+    "- If the message is already standalone, return it completely unchanged.\n"
+    "- Never answer the question. Return only the rewritten question, with no preamble."
+)
+
+
+def contextualize_query_node(state: RAGState) -> dict:
+    """Resolve follow-ups before anything downstream reads the query.
+
+    Without this, the router classifies 'Yes, please.' on its own and retrieval
+    searches for the literal string 'Yes, please.' — both meaningless.
+    """
+    messages = state["messages"]
+    latest = messages[-1].content if messages else state.get("query", "")
+    history = prior_turns(messages)
+
+    # First turn of a session: nothing to resolve, so skip the LLM call.
+    if not history:
+        return {"query": latest, "user_question": latest}
+
+    transcript = "\n".join(f"{t['role']}: {t['content'][:800]}" for t in history)
+    try:
+        response = llm.invoke([
+            {"role": "system", "content": CONTEXTUALIZE_SYSTEM},
+            {
+                "role": "user",
+                "content": (
+                    f"Conversation so far:\n{transcript}\n\n"
+                    f"Latest message: {latest}\n\nStandalone question:"
+                ),
+            },
+        ])
+        resolved = (response.content or "").strip() or latest
+    except Exception:
+        resolved = latest  # never block a turn on the rewrite
+
+    return {"query": resolved, "user_question": resolved}
 
 
 # ── Router ────────────────────────────────────────────────────────────────────
@@ -75,7 +177,8 @@ router_chain = ROUTER_PROMPT | llm.with_structured_output(RouterDecision)
 
 
 def router_node(state: RAGState) -> dict:
-    query = state["messages"][-1].content
+    # Already resolved to a standalone question by contextualize_query_node.
+    query = state.get("query") or state["messages"][-1].content
     decision: RouterDecision = router_chain.invoke({"query": query})
     return {"route": decision.route}
 
@@ -198,7 +301,18 @@ def agent_node(state: RAGState) -> dict:
     # retrieval llm --> tool call --> tool result
     # llm --> no tools are bounded --> tool call
     lm = llm if current_attempts >= MAX_RETRIEVAL_ATTEMPTS else retrieval_llm
-    messages = [{"role": "system", "content": RETRIEVE_SYSTEM}] + state["messages"]
+    system = RETRIEVE_SYSTEM
+    resolved = state.get("query")
+    latest = state["messages"][-1].content if state["messages"] else None
+    if resolved and resolved != latest:
+        # The raw last message may be an elliptical follow-up ("yes please").
+        # Hand the agent the resolved question so its search queries are usable.
+        system += (
+            "\n\nThe user's latest message resolves, in context, to this standalone "
+            f"question:\n{resolved}\n"
+            "Base your search queries on it rather than on the literal last message."
+        )
+    messages = [{"role": "system", "content": system}] + state["messages"]
     response = lm.invoke(messages)
     updates: dict = {"messages": [response]}
     if getattr(response, "tool_calls", None):
@@ -232,7 +346,10 @@ def query_rewrite_node(state: RAGState) -> dict:
     ])
     rewritten = response.content.strip()
     return {
-        "messages": [HumanMessage(content=rewritten)],
+        # Tagged so it is never replayed to the model as a real user turn.
+        "messages": [
+            HumanMessage(content=rewritten, additional_kwargs={SYNTHETIC: True})
+        ],
         "query": rewritten,
         "retrieved_docs": [],
         "retrieval_attempts": 0,
@@ -258,7 +375,7 @@ verification_llm = llm.with_structured_output(ClaimVerificationResult)
 
 
 def verify_claim_node(state: RAGState) -> dict:
-    claim = state["messages"][-1].content
+    claim = state.get("query") or state["messages"][-1].content
     tavily_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
 
     # General web search for recent work superseding the claim
@@ -393,12 +510,11 @@ def render_sources(sources: list[dict]) -> str:
     """Markdown block appended beneath the generated answer."""
     if not sources:
         return ""
-    lines = ["", "", "---", "", "**Sources**", ""]
-    for s in sources:
-        lines.append(
-            f"{s['n']}. [{s['label']}]({s['url']})" if s["url"] else f"{s['n']}. {s['label']}"
-        )
-    return "\n".join(lines)
+    entries = [
+        f"{s['n']}. [{s['label']}]({s['url']})" if s["url"] else f"{s['n']}. {s['label']}"
+        for s in sources
+    ]
+    return SOURCES_MARKER + "\n".join(entries)
 
 
 ANSWER_SYSTEM = (
@@ -415,9 +531,20 @@ ANSWER_SYSTEM = (
 )
 
 
+DIRECT_ANSWER_SYSTEM = (
+    "You are a research assistant. Answer from your own knowledge.\n"
+    "Use the conversation above to resolve references and to honour anything you "
+    "previously offered to do — if the user is accepting an earlier offer, carry it out "
+    "rather than asking them to restate the question."
+)
+
+
 def generate_answer_node(state: RAGState) -> dict:
     route = state.get("route")
-    query = state["query"]
+    # `query` may have been overwritten by a retrieval rewrite; answer what the
+    # user actually asked.
+    query = state.get("user_question") or state["query"]
+    history = prior_turns(state["messages"])
     sources: list[dict] = []
 
     if route == "retrieve":
@@ -441,6 +568,7 @@ def generate_answer_node(state: RAGState) -> dict:
                 answer = llm.invoke(
                     [
                         {"role": "system", "content": ANSWER_SYSTEM},
+                        *history,
                         {"role": "user", "content": prompt},
                     ]
                 ).content
@@ -450,7 +578,7 @@ def generate_answer_node(state: RAGState) -> dict:
     elif route == "verify_claim":
         verdict = state.get("claim_verdict", "")
         papers = state.get("superseding_papers") or []
-        claim_text = state["query"]
+        claim_text = query
         if papers:
             papers_block = "\n\n".join(
                 f"{i + 1}. **{p['title']}**\n   {p['summary']}\n   Link: {p['url']}"
@@ -474,8 +602,13 @@ def generate_answer_node(state: RAGState) -> dict:
             )
 
     else:  # direct_answer
-        prompt = f"Answer from your knowledge.\n\nQuestion: {query}"
-        answer = llm.invoke([{"role": "user", "content": prompt}]).content
+        answer = llm.invoke(
+            [
+                {"role": "system", "content": DIRECT_ANSWER_SYSTEM},
+                *history,
+                {"role": "user", "content": query},
+            ]
+        ).content
 
     return {"answer": answer, "sources": sources, "messages": [AIMessage(content=answer)]}
 
@@ -514,6 +647,7 @@ def build_graph(db_path: str = "checkpoints.db"):
     checkpointer = SqliteSaver(conn)
 
     graph = StateGraph(RAGState)
+    graph.add_node("contextualize", contextualize_query_node)
     graph.add_node("router", router_node)
     graph.add_node("agent_node", agent_node)
     graph.add_node("retrieval", base_tool_node)
@@ -522,7 +656,8 @@ def build_graph(db_path: str = "checkpoints.db"):
     graph.add_node("verify_claim", verify_claim_node)
     graph.add_node("generate_answer", generate_answer_node)
 
-    graph.set_entry_point("router")
+    graph.set_entry_point("contextualize")
+    graph.add_edge("contextualize", "router")
 
     graph.add_conditional_edges(
         "router",

@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 
 from backend.btw_handler import handle_btw
 from backend.paper_loader import load_arxiv, load_document, load_webpage
-from backend.rag_graph import build_graph
+from backend.rag_graph import build_graph, conversation_history
 from backend.vector_store import add_paper, list_papers
 
 st.set_page_config(page_title="Papeer", page_icon="📚", layout="centered")
@@ -64,6 +64,7 @@ def _serialize_state(values: dict) -> dict:
 # ── Live progress labels for the graph run ────────────────────────────────────
 
 NODE_STAGES = {
+    "contextualize": "🧵 Reading the conversation so far…",
     "router": "🧭 Working out how to answer…",
     "agent_node": "🤔 Deciding what to look up…",
     "retrieval": "📚 Fetching passages…",
@@ -142,14 +143,23 @@ def load_session_chats(session_id: str) -> list[dict]:
             return []
         chats = []
         turn = 0
-        for msg in state.values.get("messages", []):
-            type_name = type(msg).__name__
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            if type_name == "HumanMessage":
-                chats.append({"role": "user", "content": content})
-            elif type_name in ("AIMessage", "AIMessageChunk"):
+        # Reuse the graph's transcript filter so replay matches what the model
+        # sees: no tool traffic, no synthetic rewrite queries, no blank bubbles.
+        for entry in conversation_history(
+            state.values.get("messages", []), limit=None, strip_sources=False
+        ):
+            if entry["role"] == "user":
+                chats.append({"role": "user", "content": entry["content"]})
+            else:
                 turn += 1
-                chats.append({"role": "assistant", "content": content, "turn": turn, "graph_state": {}})
+                chats.append(
+                    {
+                        "role": "assistant",
+                        "content": entry["content"],
+                        "turn": turn,
+                        "graph_state": {},
+                    }
+                )
         return chats
     except Exception:
         return []
@@ -388,6 +398,7 @@ if prompt := st.chat_input("Ask about your papers, verify a claim, or search the
             "claim_source": None,
             "superseding_papers": [],
             "answer": None,
+            "user_question": None,
             "sources": [],
             "is_relevant": None,
             "rewrite_count": 0,

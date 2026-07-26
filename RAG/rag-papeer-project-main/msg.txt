@@ -1,45 +1,27 @@
-feat(rag): add inline citations, cross-encoder reranking, and live progress
+fix(rag): resolve follow-up questions against conversation history
 
-Answers now cite their sources, and retrieval no longer hands the LLM a
-noisy top-k.
+"Yes, please." reached the model as two words with no context, because
+router_node classified state["messages"][-1] in isolation and every
+branch of generate_answer_node built its prompt from `query` alone. The
+checkpointer held the full history throughout; nothing read it.
 
-Citations
-- generate_answer_node builds a numbered context block and instructs the
-  model to attach a bracketed marker to each claim; a Sources list with
-  paper titles and page numbers is appended to the answer.
-- Chunks are grouped by (title, page) or URL, so several chunks from one
-  page collapse into one citation instead of four consecutive ones.
-- prune_citations() drops sources the model never referenced and
-  renumbers the rest from 1 in a single regex pass, so a swap (3->1,
-  1->2) cannot double-map.
-
-Reranking
-- New backend/reranker.py wrapping FlashRank. retrieve_from_vectorstore
-  overfetches 5x the requested k (capped at 40) and the cross-encoder
-  trims back to k.
-- Motivated by eval_results.json: Contextual Recall 1.00 alongside
-  Contextual Relevancy 0.09-0.27 is the signature of a bi-encoder that
-  retrieves the right passage and then buries it.
-- Reranking is an optimisation, not a dependency: a missing model or a
-  failed inference logs a warning and falls back to similarity order.
-- rerank_score is attached to chunk metadata for the state inspector.
-
-UI
-- The graph run streams in combined updates+messages mode and reports
-  each stage into an st.status panel. updates mode is required because
-  the ToolNode makes no LLM call and is invisible to messages mode.
-- The rendered answer is read back from graph state rather than the
-  token stream, since the Sources block is appended after generation.
-  This also fixes verify_claim, which never streamed at all.
-- Graph-run exceptions are caught and surfaced in the status panel
-  instead of crashing the page with a traceback.
-
-Build
-- Add flashrank. Drop chromadb and arxiv, both declared but unimported.
-- Dockerfile pre-downloads the reranker model, adds a healthcheck, and
-  stops copying main.py and sessions.json into the image.
-
-Docs
-- README: document the above, and correct the query-rewrite constraint
-  (the code allows one rewrite, not three; the three-attempt cap applies
-  to retrieval tool calls).
+- Add a `contextualize` node at the graph entry point that rewrites
+  elliptical follow-ups into standalone questions before routing. Skipped
+  on the first turn of a session, and falls back to the raw message if
+  the rewrite errors.
+- Add conversation_history() / prior_turns() to extract the durable
+  user->assistant transcript, excluding tool-call messages, tool results
+  and synthetic rewrite queries. Replaying tool traffic wastes tokens;
+  replaying rewrites makes the model believe the user asked something
+  they never asked.
+- Tag query_rewrite_node's injected HumanMessage with `papeer_synthetic`
+  so machine-generated queries are identifiable as such.
+- Add `user_question` to state. `query` is overwritten by retrieval
+  rewrites, so the final answer was being generated against the machine
+  query rather than the real question.
+- Read the resolved question in agent_node and verify_claim_node instead
+  of the literal last message.
+- Fix load_session_chats: it counted tool-call AIMessages as assistant
+  turns, rendering blank bubbles and inflating the turn counter on any
+  reloaded session that used retrieval. Now shares the transcript filter.
+- README: document the node, the flow change, and the new invariants.
