@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import warnings
 from typing import Annotated
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field
 from tavily import TavilyClient
 
 from backend.models import ClaimVerificationResult, RelevancyDecision, RouterDecision
+from backend.reranker import candidate_pool_size, rerank
 from backend.vector_store import search as vs_search
 
 load_dotenv()
@@ -38,6 +40,7 @@ class RAGState(MessagesState):
     claim_source: str | None
     superseding_papers: list[dict] | None
     answer: str | None
+    sources: list[dict] | None
     is_relevant: bool | None
     rewrite_count: int
 
@@ -100,10 +103,13 @@ def retrieve_from_vectorstore(
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> list:
     """Search the uploaded research paper vector store for relevant passages."""
-    docs = vs_search(query=query, session_id=session_id, k=k)
-    if not docs:
+    # Overfetch cheaply with the bi-encoder, then let the cross-encoder pick the
+    # best `k`. See backend/reranker.py for why.
+    candidates = vs_search(query=query, session_id=session_id, k=candidate_pool_size(k))
+    if not candidates:
         return [ToolMessage(content="No relevant documents found in the vector store.", tool_call_id=tool_call_id)]
-    summary = f"Retrieved {len(docs)} chunk(s) from the vector store."
+    docs = rerank(query, candidates, top_n=k)
+    summary = f"Retrieved {len(docs)} chunk(s), reranked from {len(candidates)} candidate(s)."
     return [
         ToolMessage(content=summary, tool_call_id=tool_call_id),
         Command(update={"retrieved_docs": (current_docs or []) + docs}),
@@ -303,9 +309,116 @@ def verify_claim_node(state: RAGState) -> dict:
     }
 
 
+# ── Citations ─────────────────────────────────────────────────────────────────
+
+def _source_key(doc: Document) -> tuple:
+    """Chunks from the same page (or the same web page) share one citation number."""
+    md = doc.metadata or {}
+    url = md.get("url") or md.get("source") or ""
+    if isinstance(url, str) and url.startswith(("http://", "https://")):
+        return ("web", url)
+    title = md.get("title") or "Untitled document"
+    return ("doc", title, md.get("page"))
+
+
+def _source_label(key: tuple, md: dict) -> tuple[str, str | None]:
+    """Return (human-readable label, url or None) for one citation entry."""
+    if key[0] == "web":
+        return (md.get("title") or key[1]), key[1]
+    title, page = key[1], key[2]
+    if isinstance(page, int):
+        return f"{title} — p. {page + 1}", None
+    return title, None
+
+
+def build_cited_context(docs: list[Document]) -> tuple[str, list[dict]]:
+    """Build a numbered context block plus the matching ordered source list."""
+    order: list[tuple] = []
+    grouped: dict[tuple, dict] = {}
+    for doc in docs:
+        key = _source_key(doc)
+        if key not in grouped:
+            grouped[key] = {"metadata": doc.metadata or {}, "chunks": []}
+            order.append(key)
+        grouped[key]["chunks"].append(doc.page_content)
+
+    sources: list[dict] = []
+    blocks: list[str] = []
+    for n, key in enumerate(order, start=1):
+        label, url = _source_label(key, grouped[key]["metadata"])
+        sources.append({"n": n, "label": label, "url": url})
+        header = f"[{n}] {label}" + (f" ({url})" if url else "")
+        blocks.append(header + "\n" + "\n\n".join(grouped[key]["chunks"]))
+
+    return "\n\n---\n\n".join(blocks), sources
+
+
+_CITATION_RE = re.compile(r"\[(\d+)\]")
+
+
+def prune_citations(answer: str, sources: list[dict]) -> tuple[str, list[dict]]:
+    """Drop sources the model never cited, then renumber the rest from 1.
+
+    Listing retrieved-but-unused sources makes an answer look less grounded than
+    it is, and invites the reader to check a page that says nothing relevant.
+    Renumbering happens in a single regex pass so that a swap (3->1, 1->2) can't
+    double-map.
+    """
+    valid = {s["n"] for s in sources}
+    cited: list[int] = []
+    for match in _CITATION_RE.finditer(answer):
+        n = int(match.group(1))
+        if n in valid and n not in cited:
+            cited.append(n)
+
+    # Model ignored the citation instruction — keep every source rather than
+    # silently stripping attribution from the answer.
+    if not cited:
+        return answer, sources
+
+    remap = {old: new for new, old in enumerate(cited, start=1)}
+    answer = _CITATION_RE.sub(
+        lambda m: f"[{remap[int(m.group(1))]}]" if int(m.group(1)) in remap else m.group(0),
+        answer,
+    )
+    by_n = {s["n"]: s for s in sources}
+    pruned = [
+        {**by_n[old], "n": new}
+        for old, new in sorted(remap.items(), key=lambda kv: kv[1])
+    ]
+    return answer, pruned
+
+
+def render_sources(sources: list[dict]) -> str:
+    """Markdown block appended beneath the generated answer."""
+    if not sources:
+        return ""
+    lines = ["", "", "---", "", "**Sources**", ""]
+    for s in sources:
+        lines.append(
+            f"{s['n']}. [{s['label']}]({s['url']})" if s["url"] else f"{s['n']}. {s['label']}"
+        )
+    return "\n".join(lines)
+
+
+ANSWER_SYSTEM = (
+    "You are a research assistant answering questions about academic papers.\n\n"
+    "Citation rules:\n"
+    "- Support every factual claim with a bracketed citation, e.g. "
+    "'The model uses multi-head attention [1].'\n"
+    "- Place the citation immediately after the claim it supports, not at the end "
+    "of the paragraph.\n"
+    "- Cite several sources at once when a claim draws on more than one: [1][3].\n"
+    "- Use ONLY the source numbers listed below. Never invent a number.\n"
+    "- Do NOT write your own Sources or References list — one is appended automatically.\n"
+    "- If the sources do not answer the question, say so plainly instead of guessing."
+)
+
+
 def generate_answer_node(state: RAGState) -> dict:
     route = state.get("route")
     query = state["query"]
+    sources: list[dict] = []
 
     if route == "retrieve":
         if state.get("is_relevant") is False and state.get("rewrite_count", 0) >= 1:
@@ -319,9 +432,20 @@ def generate_answer_node(state: RAGState) -> dict:
             if not docs:
                 answer = "I don't know the answer."
             else:
-                context = "\n\n---\n\n".join(doc.page_content for doc in docs)
-                prompt = f"Answer the question using this context:\n\n{context}\n\nQuestion: {query}"
-                answer = llm.invoke([{"role": "user", "content": prompt}]).content
+                context, sources = build_cited_context(docs)
+                prompt = (
+                    f"Numbered sources:\n\n{context}\n\n"
+                    f"Question: {query}\n\n"
+                    "Answer the question using the sources above, citing each claim."
+                )
+                answer = llm.invoke(
+                    [
+                        {"role": "system", "content": ANSWER_SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ]
+                ).content
+                answer, sources = prune_citations(answer, sources)
+                answer += render_sources(sources)
 
     elif route == "verify_claim":
         verdict = state.get("claim_verdict", "")
@@ -353,7 +477,7 @@ def generate_answer_node(state: RAGState) -> dict:
         prompt = f"Answer from your knowledge.\n\nQuestion: {query}"
         answer = llm.invoke([{"role": "user", "content": prompt}]).content
 
-    return {"answer": answer, "messages": [AIMessage(content=answer)]}
+    return {"answer": answer, "sources": sources, "messages": [AIMessage(content=answer)]}
 
 
 # ── Graph ─────────────────────────────────────────────────────────────────────

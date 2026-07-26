@@ -61,6 +61,36 @@ def _serialize_state(values: dict) -> dict:
     return out
 
 
+# ── Live progress labels for the graph run ────────────────────────────────────
+
+NODE_STAGES = {
+    "router": "🧭 Working out how to answer…",
+    "agent_node": "🤔 Deciding what to look up…",
+    "retrieval": "📚 Fetching passages…",
+    "relevancy_check": "🔎 Checking the passages actually answer your question…",
+    "query_rewrite": "♻️ Nothing useful found — refining the search query…",
+    "verify_claim": "🕵️ Checking the claim against recent literature…",
+    "generate_answer": "✍️ Writing the answer…",
+}
+
+TOOL_STAGES = {
+    "retrieve_from_vectorstore": "📚 Searching your papers…",
+    "web_search": "🌐 Searching the web…",
+}
+
+
+def _tool_stage(node_update) -> str | None:
+    """If a node emitted tool calls, name the tool that is about to run."""
+    if not isinstance(node_update, dict):
+        return None
+    for msg in node_update.get("messages") or []:
+        for call in getattr(msg, "tool_calls", None) or []:
+            label = TOOL_STAGES.get(call.get("name"))
+            if label:
+                return label
+    return None
+
+
 def generate_session_name(first_message: str) -> str:
     try:
         response = _rename_llm.invoke(
@@ -358,32 +388,68 @@ if prompt := st.chat_input("Ask about your papers, verify a claim, or search the
             "claim_source": None,
             "superseding_papers": [],
             "answer": None,
+            "sources": [],
             "is_relevant": None,
             "rewrite_count": 0,
         }
         config = {"configurable": {"thread_id": active_sid}}
 
         with st.chat_message("assistant"):
+            status = st.status("🧭 Working out how to answer…", expanded=True)
             placeholder = st.empty()
             response_text = ""
+            state_snapshot = {}
+            failed = False
+            _stage = [None]  # list, not a plain name: closure below mutates it
 
-            for chunk, metadata in graph.stream(input_state, config, stream_mode="messages"):
-                if (
-                    metadata.get("langgraph_node") == "generate_answer"
-                    and hasattr(chunk, "content")
-                    and chunk.content
+            def set_stage(label: str | None) -> None:
+                if label and label != _stage[0]:
+                    _stage[0] = label
+                    status.update(label=label)
+                    status.write(label)
+
+            try:
+                for mode, payload in graph.stream(
+                    input_state, config, stream_mode=["updates", "messages"]
                 ):
-                    response_text += chunk.content
-                    placeholder.markdown(response_text + "▌")
+                    if mode == "updates":
+                        # Fires as each node finishes. If the node queued a tool call,
+                        # name the tool instead of the generic node label.
+                        for node_name, node_update in (payload or {}).items():
+                            set_stage(
+                                _tool_stage(node_update) or NODE_STAGES.get(node_name)
+                            )
+                    elif mode == "messages":
+                        chunk, metadata = payload
+                        set_stage(NODE_STAGES.get(metadata.get("langgraph_node")))
+                        if (
+                            metadata.get("langgraph_node") == "generate_answer"
+                            and hasattr(chunk, "content")
+                            and chunk.content
+                        ):
+                            response_text += chunk.content
+                            placeholder.markdown(response_text + "▌")
+            except Exception as exc:
+                failed = True
+                status.write(f"❌ {type(exc).__name__}: {exc}")
+                status.update(label="Something went wrong", state="error", expanded=True)
 
-            if not response_text:
+            if failed:
+                response_text = response_text or (
+                    "⚠️ I hit an error before I could finish answering. "
+                    "Please try again — details are in the panel above."
+                )
+            else:
                 final_values = graph.get_state(config).values
-                response_text = final_values.get("answer") or "No response generated."
+                state_snapshot = _serialize_state(final_values)
+                # Prefer the canonical answer from state: it carries the appended
+                # Sources block, which never comes through the token stream.
+                response_text = (
+                    final_values.get("answer") or response_text or "No response generated."
+                )
+                status.update(label="✅ Done", state="complete", expanded=False)
 
             placeholder.markdown(response_text)
-
-            final_values = graph.get_state(config).values
-            state_snapshot = _serialize_state(final_values)
 
             with st.expander(f"📊 Graph state · turn {current_turn}", expanded=False):
                 st.json(state_snapshot)

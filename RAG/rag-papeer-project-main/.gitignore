@@ -232,6 +232,9 @@ graph_diag.ipynb
 # embedding cache
 embedding_cache/
 
+# reranker model weights (downloaded on first run)
+rerank_cache/
+
 # database
 /*.db
 /*.db-*

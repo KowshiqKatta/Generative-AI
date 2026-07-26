@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 embedding_cache/
+rerank_cache/
 *.db
 *.db-shm
 *.db-wal
