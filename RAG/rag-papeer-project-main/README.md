@@ -133,38 +133,46 @@ All have working defaults; set them only to override.
 
 ## Architecture
 
-```
-app.py (Streamlit UI)
-│
-├── backend/rag_graph.py       — LangGraph RAG workflow (contextualize → router → retrieve/verify/direct → answer)
-├── backend/reranker.py        — Local cross-encoder reranking with graceful fallback
-├── backend/btw_handler.py     — Off-topic /btw handler (streaming, not stored in history)
-├── backend/vector_store.py    — Qdrant Cloud vector store with cached embeddings
-├── backend/paper_loader.py    — Multi-source paper loader (PDF, TXT, MD, URL, ArXiv)
-└── backend/models.py          — Pydantic models for routing and structured LLM outputs
-```
+![Papeer system architecture — UI, backend modules, external services, and local state](architecture_diagrams/papeer_system_architecture_layers.png)
 
-### RAG Graph Decision Flow
+Four layers. The Streamlit UI owns session and document management, the backend package holds all the logic,
+external services are the only network dependencies, and local state is what survives a restart.
 
-```
-User Query
-    │
-    ▼
- Contextualize (resolve follow-ups against history → standalone question)
-    │
-    ▼
- Router (LLM)
-    │
-    ├── direct_answer ──────────────────────────► Generate Answer
-    │
-    ├── retrieve ──► Agent (retriever + web tools) ──► Relevancy Check
-    │                        │                              │
-    │                        │  (overfetch → rerank → k)    │
-    │                        │◄── Query Rewrite (max 1) ────┘
-    │                        └──────────────────────────────► Generate Answer + Citations
-    │
-    └── verify_claim ──► Web Search + ArXiv Search ──► Verdict + Paper Links
-```
+| Module | Responsibility |
+|---|---|
+| `backend/rag_graph.py` | LangGraph workflow — contextualize → router → retrieve / verify / direct → answer |
+| `backend/reranker.py` | Local cross-encoder reranking, falling back to similarity order on failure |
+| `backend/vector_store.py` | Session-scoped Qdrant collections behind a cached embedder |
+| `backend/paper_loader.py` | Multi-source loader — PDF, TXT, MD, web URL, ArXiv |
+| `backend/btw_handler.py` | `/btw` side channel — streams, touches neither the store nor the checkpointer |
+| `backend/models.py` | Pydantic schemas for routing and structured LLM output |
+
+### Query Flow
+
+Every message enters the graph here. The router picks one of three paths and all three converge on a single
+answer-generation node.
+
+![Papeer query decision flow — contextualize, route, then verify, retrieve, or answer directly](architecture_diagrams/papeer_langgraph_query_decision_flow.png)
+
+Two loops carry most of the retrieval quality, and both are deliberately bounded:
+
+- **Agent ⇄ tools** repeats while the agent still wants context, capped at 3 calls. At the cap the agent is
+  swapped to an *unbound* LLM rather than merely routed away — leaving the loop while an `AIMessage` still
+  carries unmatched `tool_calls` would put orphaned IDs in the checkpointer and corrupt history for every
+  later turn in that session.
+- **Relevancy → rewrite → agent** fires at most once. If two retrieval passes both miss, a third rarely
+  rescues it, and answering honestly beats burning tokens.
+
+`/btw` appears nowhere on this diagram by design — it bypasses the graph entirely.
+
+### Document Ingestion
+
+This runs once when a paper is added, not per query.
+
+![Papeer ingestion pipeline — source, loader, splitter, cached embeddings, Qdrant collection](architecture_diagrams/papeer_document_ingestion_pipeline.png)
+
+The cache sits between the splitter and OpenAI, so re-uploading a paper — or loading one that shares text
+with a document already in the store — costs nothing in embedding calls.
 
 ---
 
@@ -292,5 +300,7 @@ uv run python evaluate.py
 
 ### Documentation
 
+- Added `architecture_diagrams/` with three rendered diagrams — system layers, query flow, and ingestion
+  pipeline — and replaced the ASCII blocks in this README with them. The module tree became a table.
 - Corrected the query-rewrite constraint: the code permits **one** rewrite, not three. The three-attempt
   cap applies to retrieval tool calls, which is a separate mechanism.

@@ -1,27 +1,9 @@
-fix(rag): resolve follow-up questions against conversation history
+docs: replace ASCII architecture blocks with rendered diagrams
 
-"Yes, please." reached the model as two words with no context, because
-router_node classified state["messages"][-1] in isolation and every
-branch of generate_answer_node built its prompt from `query` alone. The
-checkpointer held the full history throughout; nothing read it.
-
-- Add a `contextualize` node at the graph entry point that rewrites
-  elliptical follow-ups into standalone questions before routing. Skipped
-  on the first turn of a session, and falls back to the raw message if
-  the rewrite errors.
-- Add conversation_history() / prior_turns() to extract the durable
-  user->assistant transcript, excluding tool-call messages, tool results
-  and synthetic rewrite queries. Replaying tool traffic wastes tokens;
-  replaying rewrites makes the model believe the user asked something
-  they never asked.
-- Tag query_rewrite_node's injected HumanMessage with `papeer_synthetic`
-  so machine-generated queries are identifiable as such.
-- Add `user_question` to state. `query` is overwritten by retrieval
-  rewrites, so the final answer was being generated against the machine
-  query rather than the real question.
-- Read the resolved question in agent_node and verify_claim_node instead
-  of the literal last message.
-- Fix load_session_chats: it counted tool-call AIMessages as assistant
-  turns, rendering blank bubbles and inflating the turn counter on any
-  reloaded session that used retrieval. Now shares the transcript filter.
-- README: document the node, the flow change, and the new invariants.
+- Add architecture_diagrams/ with system layers, query flow, and
+  ingestion pipeline.
+- Restructure the Architecture section: diagram, module table, then
+  Query Flow and Document Ingestion subsections. The two bounded loops
+  and the reason for the unbound-LLM swap at the retrieval cap are now
+  written out rather than implied by the ASCII art.
+- Ignore architecture_diagrams/ in the Docker build context.

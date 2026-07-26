@@ -5,6 +5,7 @@ __pycache__/
 *.pyo
 embedding_cache/
 rerank_cache/
+architecture_diagrams/
 *.db
 *.db-shm
 *.db-wal
