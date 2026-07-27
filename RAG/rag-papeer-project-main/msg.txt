@@ -1,9 +1,18 @@
-docs: replace ASCII architecture blocks with rendered diagrams
+feat(ui): wide layout, context pane, dev mode, and sidebar rework
 
-- Add architecture_diagrams/ with system layers, query flow, and
-  ingestion pipeline.
-- Restructure the Architecture section: diagram, module table, then
-  Query Flow and Document Ingestion subsections. The two bounded loops
-  and the reason for the unbound-LLM swap at the retrieval cap are now
-  written out rather than implied by the ASCII art.
-- Ignore architecture_diagrams/ in the Docker build context.
+- layout="wide" with a 2:1 split; new retrieved-context pane lists the
+  passages behind the latest answer with title and page number, read
+  from the checkpointer so it survives session switches and restarts.
+- Route badge under each answer naming the path that produced it.
+- Developer mode toggle gates the graph-state JSON and rerank scores;
+  off by default.
+- Sidebar loaders moved into tabs. Uploads ingest on selection with a
+  progress bar instead of a second click.
+- Copy control per answer; empty state adapts to whether documents are
+  loaded.
+- Stop button during generation. Streamlit has no cancellation
+  primitive, so this works by interrupting the run — which required
+  moving the chat-log commit to after the turn completes. Previously an
+  interruption left a dangling user message with no reply.
+- Add .streamlit/config.toml (dark base, teal accent), copy it into the
+  image, and gitignore .streamlit/secrets.toml.

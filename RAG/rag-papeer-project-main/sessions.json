@@ -4,5 +4,11 @@
     "name": "Stars Achieved and Duration",
     "created_at": "2026-07-26T21:29:54.253847",
     "is_named": true
+  },
+  "9c8c94a2-024e-48b1-b1f6-5e7cfaae198e": {
+    "id": "9c8c94a2-024e-48b1-b1f6-5e7cfaae198e",
+    "name": "How Many Stars Exist",
+    "created_at": "2026-07-27T20:47:05.598961",
+    "is_named": true
   }
 }

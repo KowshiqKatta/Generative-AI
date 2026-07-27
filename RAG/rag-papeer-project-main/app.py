@@ -13,7 +13,7 @@ from backend.paper_loader import load_arxiv, load_document, load_webpage
 from backend.rag_graph import build_graph, conversation_history
 from backend.vector_store import add_paper, list_papers
 
-st.set_page_config(page_title="Papeer", page_icon="📚", layout="centered")
+st.set_page_config(page_title="Papeer", page_icon="📚", layout="wide")
 
 
 @st.cache_resource
@@ -77,6 +77,13 @@ NODE_STAGES = {
 TOOL_STAGES = {
     "retrieve_from_vectorstore": "📚 Searching your papers…",
     "web_search": "🌐 Searching the web…",
+}
+
+# Shown under each answer so the reader knows why it looks the way it does.
+ROUTE_BADGES = {
+    "retrieve": "📚 Answered from your documents",
+    "verify_claim": "🕵️ Claim checked against recent literature",
+    "direct_answer": "💡 Answered from general knowledge, no retrieval",
 }
 
 
@@ -158,6 +165,7 @@ def load_session_chats(session_id: str) -> list[dict]:
                         "content": entry["content"],
                         "turn": turn,
                         "graph_state": {},
+                        "route": None,
                     }
                 )
         return chats
@@ -170,8 +178,47 @@ def switch_session(session_id: str) -> None:
     if session_id not in st.session_state.chats:
         st.session_state.chats[session_id] = load_session_chats(session_id)
     if session_id not in st.session_state.turns:
-        turn_count = sum(1 for m in st.session_state.chats[session_id] if m["role"] == "assistant")
+        turn_count = sum(
+            1 for m in st.session_state.chats[session_id] if m["role"] == "assistant"
+        )
         st.session_state.turns[session_id] = turn_count
+
+
+def latest_retrieved_docs(session_id: str) -> list[dict]:
+    """Passages behind the most recent answer, for the context pane.
+
+    Read from the checkpointer rather than the in-memory chat log so the pane
+    still works after a session switch or an app restart.
+    """
+    try:
+        values = graph.get_state({"configurable": {"thread_id": session_id}}).values or {}
+    except Exception:
+        return []
+    out = []
+    for doc in values.get("retrieved_docs") or []:
+        md = doc.metadata or {}
+        page = md.get("page")
+        out.append(
+            {
+                "title": md.get("title") or md.get("url") or "Untitled",
+                "page": page + 1 if isinstance(page, int) else None,
+                "url": md.get("url") if str(md.get("url", "")).startswith("http") else None,
+                "score": md.get("rerank_score"),
+                "text": doc.page_content,
+            }
+        )
+    return out
+
+
+def render_assistant_extras(msg: dict) -> None:
+    """Route badge, copy affordance, and (in dev mode) the graph state."""
+    if msg.get("route") in ROUTE_BADGES:
+        st.caption(ROUTE_BADGES[msg["route"]])
+    with st.expander("📋 Copy this answer", expanded=False):
+        st.code(msg["content"], language=None)
+    if st.session_state.get("dev_mode") and msg.get("graph_state"):
+        with st.expander(f"📊 Graph state · turn {msg.get('turn', '?')}", expanded=False):
+            st.json(msg["graph_state"])
 
 
 graph = get_graph()
@@ -198,14 +245,13 @@ active_sid = st.session_state.active_session_id
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    if st.button("+ New Chat", use_container_width=True):
+    if st.button("➕ New Chat", use_container_width=True, type="primary"):
         new_sid = create_session()
         st.session_state.active_session_id = new_sid
         active_sid = new_sid
         st.rerun()
-    st.divider()
-    st.markdown("## 💬 Sessions")
 
+    st.markdown("### 💬 Sessions")
     sorted_sessions = sorted(
         st.session_state.sessions_meta.values(),
         key=lambda s: s["created_at"],
@@ -214,43 +260,47 @@ with st.sidebar:
     for session in sorted_sessions:
         sid = session["id"]
         is_active = sid == st.session_state.active_session_id
-        btn_type = "primary" if is_active else "secondary"
         if st.button(
             session["name"],
             key=f"sess_{sid}",
             use_container_width=True,
-            type=btn_type,
+            type="primary" if is_active else "secondary",
         ):
             if not is_active:
                 switch_session(sid)
                 st.rerun()
 
     st.divider()
-    st.markdown("## 📄 Documents")
+    st.markdown("### 📄 Add documents")
 
-    # ── Section 1: File upload ─────────────────────────────────────────────────
-    st.markdown("**Upload Files**")
-    uploaded_files = st.file_uploader(
-        "PDF, TXT, or Markdown",
-        type=["pdf", "txt", "md", "markdown"],
-        accept_multiple_files=True,
-        key=f"uploader_{active_sid}",
-        label_visibility="collapsed",
-    )
-    if st.button("Add Files", use_container_width=True, key="btn_add_files"):
+    tab_upload, tab_url, tab_arxiv = st.tabs(["Upload", "URL", "ArXiv"])
+
+    with tab_upload:
+        uploaded_files = st.file_uploader(
+            "PDF, TXT, or Markdown",
+            type=["pdf", "txt", "md", "markdown"],
+            accept_multiple_files=True,
+            key=f"uploader_{active_sid}",
+            label_visibility="collapsed",
+        )
+        # Ingest as soon as files are selected. The processed-name set makes this
+        # idempotent across the reruns that Streamlit fires on every interaction.
         if uploaded_files:
             processed_key = f"processed_files_{active_sid}"
-            if processed_key not in st.session_state:
-                st.session_state[processed_key] = set()
-            with st.spinner("Processing files…"):
-                for f in uploaded_files:
-                    if f.name in st.session_state[processed_key]:
-                        st.info(f"Already loaded: {f.name}")
-                        continue
+            st.session_state.setdefault(processed_key, set())
+            pending = [
+                f for f in uploaded_files if f.name not in st.session_state[processed_key]
+            ]
+            if pending:
+                progress = st.progress(0.0, text="Processing…")
+                for i, f in enumerate(pending, start=1):
+                    progress.progress((i - 1) / len(pending), text=f"Reading {f.name}…")
                     suffix = Path(f.name).suffix
                     tmp_path = None
                     try:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                        with tempfile.NamedTemporaryFile(
+                            delete=False, suffix=suffix
+                        ) as tmp:
                             tmp.write(f.read())
                             tmp_path = tmp.name
                         docs = load_document(tmp_path)
@@ -258,94 +308,108 @@ with st.sidebar:
                             doc.metadata["title"] = Path(f.name).stem
                         add_paper(docs, active_sid)
                         st.session_state[processed_key].add(f.name)
-                        st.success(f"Added: {f.name}")
                     except Exception as e:
                         st.error(f"Failed: {f.name} — {e}")
                     finally:
                         if tmp_path:
                             Path(tmp_path).unlink(missing_ok=True)
-            st.rerun()
-        else:
-            st.warning("No files selected.")
+                progress.empty()
+                st.rerun()
 
-    # ── Section 2: Web URL loader ──────────────────────────────────────────────
-    st.markdown("**Web Pages**")
-    url_input = st.text_area(
-        "URLs (one per line)",
-        key=f"url_area_{active_sid}",
-        height=80,
-        label_visibility="collapsed",
-        placeholder="https://example.com/paper",
-    )
-    if st.button("Load URLs", use_container_width=True, key="btn_load_urls"):
-        urls = [u.strip() for u in url_input.splitlines() if u.strip()]
-        if urls:
-            with st.spinner("Loading web pages…"):
-                for url in urls:
+    with tab_url:
+        url_input = st.text_area(
+            "URLs (one per line)",
+            key=f"url_area_{active_sid}",
+            height=80,
+            label_visibility="collapsed",
+            placeholder="https://example.com/paper",
+        )
+        if st.button("Load URLs", use_container_width=True, key="btn_load_urls"):
+            urls = [u.strip() for u in url_input.splitlines() if u.strip()]
+            if urls:
+                with st.spinner("Loading web pages…"):
+                    for url in urls:
+                        try:
+                            docs = load_webpage(url)
+                            add_paper(docs, active_sid)
+                        except Exception as e:
+                            st.error(f"Failed: {url[:60]} — {e}")
+                st.rerun()
+            else:
+                st.warning("Enter at least one URL.")
+
+    with tab_arxiv:
+        arxiv_title = st.text_input(
+            "Paper title or ArXiv ID",
+            key=f"arxiv_input_{active_sid}",
+            label_visibility="collapsed",
+            placeholder="1706.03762  or  Attention Is All You Need",
+        )
+        if st.button("Load paper", use_container_width=True, key="btn_load_arxiv"):
+            if arxiv_title.strip():
+                with st.spinner("Loading from ArXiv…"):
                     try:
-                        docs = load_webpage(url)
+                        docs = load_arxiv(arxiv_title.strip())
                         add_paper(docs, active_sid)
-                        st.success(f"Loaded: {url[:60]}")
                     except Exception as e:
-                        st.error(f"Failed: {url[:60]} — {e}")
-            st.rerun()
-        else:
-            st.warning("Enter at least one URL.")
+                        st.error(f"Failed: {e}")
+                st.rerun()
+            else:
+                st.warning("Enter a paper title or ArXiv ID.")
 
-    # ── Section 3: ArXiv loader ────────────────────────────────────────────────
-    st.markdown("**ArXiv Papers**")
-    arxiv_title = st.text_input(
-        "Paper title or ArXiv ID",
-        key=f"arxiv_input_{active_sid}",
-        label_visibility="collapsed",
-        placeholder="1706.03762  or  Attention Is All You Need",
-    )
-    if st.button("Load ArXiv Paper", use_container_width=True, key="btn_load_arxiv"):
-        if arxiv_title.strip():
-            with st.spinner("Loading from ArXiv…"):
-                try:
-                    docs = load_arxiv(arxiv_title.strip())
-                    add_paper(docs, active_sid)
-                    loaded_title = docs[0].metadata.get("title") if docs else arxiv_title.strip()
-                    st.success(f"Loaded: {loaded_title}")
-                except Exception as e:
-                    st.error(f"Failed: {e}")
-            st.rerun()
-        else:
-            st.warning("Enter a paper title or ArXiv ID.")
-
-    # ── Loaded Documents list ──────────────────────────────────────────────────
     st.divider()
-    st.markdown("### Loaded Documents")
+    st.markdown("### 📚 Loaded documents")
     try:
         doc_titles = list_papers(active_sid)
     except Exception:
         doc_titles = None
     if doc_titles is None:
-        st.caption("Could not load document list — try refreshing.")
+        st.caption("Could not load the document list — try refreshing.")
     elif doc_titles:
         for title in doc_titles:
             st.markdown(f"- {title}")
     else:
-        st.caption("No documents loaded yet.")
+        st.caption("Nothing loaded yet.")
+
+    st.divider()
+    st.toggle(
+        "🛠️ Developer mode",
+        key="dev_mode",
+        help="Show the raw LangGraph state and reranker scores under each answer.",
+    )
 
 # ── Page header ────────────────────────────────────────────────────────────────
 st.title("📚 Papeer — Research Paper Assistant")
-st.markdown(
-    "🔍 **Ask questions** from your uploaded papers &nbsp;·&nbsp; "
-    "✅ **Verify claims** against recent literature &nbsp;·&nbsp; "
-    "🌐 **Search the web** for the latest findings\n\n"
-    "> Upload documents in the sidebar and start chatting below."
+st.caption(
+    "Ask questions about your papers · Verify claims against recent literature · "
+    "Search the web for the latest findings"
 )
-st.divider()
 
-# ── Chat display ───────────────────────────────────────────────────────────────
-for msg in st.session_state.chats.get(active_sid, []):
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if msg["role"] == "assistant":
-            with st.expander(f"📊 Graph state · turn {msg['turn']}", expanded=False):
-                st.json(msg["graph_state"])
+chat_col, ctx_col = st.columns([2, 1], gap="large")
+
+# ── Chat history ───────────────────────────────────────────────────────────────
+with chat_col:
+    history = st.session_state.chats.get(active_sid, [])
+
+    if not history:
+        if doc_titles:
+            st.info(
+                "**Ready when you are.** Try asking what a paper's main contribution is, "
+                "or paste a claim and ask Papeer to verify it."
+            )
+        else:
+            st.info(
+                "**Start by adding a document.** Use the sidebar to upload a PDF, paste a "
+                "URL, or pull a paper from ArXiv.\n\n"
+                "You can also just ask a general question, or prefix a message with `/btw` "
+                "for something off-topic."
+            )
+
+    for msg in history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if msg["role"] == "assistant":
+                render_assistant_extras(msg)
 
 # ── Chat input ─────────────────────────────────────────────────────────────────
 if prompt := st.chat_input("Ask about your papers, verify a claim, or search the web…"):
@@ -353,36 +417,30 @@ if prompt := st.chat_input("Ask about your papers, verify a claim, or search the
 
     if is_btw:
         query = prompt.strip()[4:].strip()
-
-        with st.chat_message("user"):
-            st.markdown(prompt)
-            st.caption("Side channel — not saved to session history.")
-
-        with st.chat_message("assistant"):
-            if not query:
-                st.markdown("Please add a question after `/btw`, e.g. `/btw What is attention?`")
-            else:
-                placeholder = st.empty()
-                response_text = ""
-                for chunk in handle_btw(query):
-                    response_text += chunk
-                    placeholder.markdown(response_text + "▌")
-                placeholder.markdown(response_text)
-            st.caption("Side channel — not saved to session history.")
+        with chat_col:
+            with st.chat_message("user"):
+                st.markdown(prompt)
+                st.caption("Side channel — not saved to session history.")
+            with st.chat_message("assistant"):
+                if not query:
+                    st.markdown(
+                        "Please add a question after `/btw`, e.g. `/btw What is attention?`"
+                    )
+                else:
+                    placeholder = st.empty()
+                    response_text = ""
+                    for chunk in handle_btw(query):
+                        response_text += chunk
+                        placeholder.markdown(response_text + "▌")
+                    placeholder.markdown(response_text)
+                st.caption("Side channel — not saved to session history.")
 
     else:
-        if active_sid not in st.session_state.chats:
-            st.session_state.chats[active_sid] = []
-        if active_sid not in st.session_state.turns:
-            st.session_state.turns[active_sid] = 0
+        st.session_state.chats.setdefault(active_sid, [])
+        st.session_state.turns.setdefault(active_sid, 0)
 
         is_first_message = len(st.session_state.chats[active_sid]) == 0
-
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        st.session_state.chats[active_sid].append({"role": "user", "content": prompt})
-        st.session_state.turns[active_sid] += 1
-        current_turn = st.session_state.turns[active_sid]
+        current_turn = st.session_state.turns[active_sid] + 1
 
         if is_first_message:
             maybe_rename_session(active_sid, prompt)
@@ -405,74 +463,120 @@ if prompt := st.chat_input("Ask about your papers, verify a claim, or search the
         }
         config = {"configurable": {"thread_id": active_sid}}
 
-        with st.chat_message("assistant"):
-            status = st.status("🧭 Working out how to answer…", expanded=True)
-            placeholder = st.empty()
-            response_text = ""
-            state_snapshot = {}
-            failed = False
-            _stage = [None]  # list, not a plain name: closure below mutates it
+        with chat_col:
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-            def set_stage(label: str | None) -> None:
-                if label and label != _stage[0]:
-                    _stage[0] = label
-                    status.update(label=label)
-                    status.write(label)
+            with st.chat_message("assistant"):
+                # Rendered before the stream so it is clickable while tokens arrive.
+                # Clicking it interrupts this script run; because nothing is committed
+                # to the chat log until the turn finishes, the interrupted turn simply
+                # disappears rather than leaving a dangling user message.
+                stop_slot = st.empty()
+                stop_slot.button("⏹ Stop", key=f"stop_{active_sid}_{current_turn}")
 
-            try:
-                for mode, payload in graph.stream(
-                    input_state, config, stream_mode=["updates", "messages"]
-                ):
-                    if mode == "updates":
-                        # Fires as each node finishes. If the node queued a tool call,
-                        # name the tool instead of the generic node label.
-                        for node_name, node_update in (payload or {}).items():
-                            set_stage(
-                                _tool_stage(node_update) or NODE_STAGES.get(node_name)
-                            )
-                    elif mode == "messages":
-                        chunk, metadata = payload
-                        set_stage(NODE_STAGES.get(metadata.get("langgraph_node")))
-                        if (
-                            metadata.get("langgraph_node") == "generate_answer"
-                            and hasattr(chunk, "content")
-                            and chunk.content
-                        ):
-                            response_text += chunk.content
-                            placeholder.markdown(response_text + "▌")
-            except Exception as exc:
-                failed = True
-                status.write(f"❌ {type(exc).__name__}: {exc}")
-                status.update(label="Something went wrong", state="error", expanded=True)
+                status = st.status("🧭 Working out how to answer…", expanded=True)
+                placeholder = st.empty()
+                response_text = ""
+                state_snapshot = {}
+                route = None
+                failed = False
+                _stage = [None]  # list, not a plain name: the closure mutates it
 
-            if failed:
-                response_text = response_text or (
-                    "⚠️ I hit an error before I could finish answering. "
-                    "Please try again — details are in the panel above."
-                )
-            else:
-                final_values = graph.get_state(config).values
-                state_snapshot = _serialize_state(final_values)
-                # Prefer the canonical answer from state: it carries the appended
-                # Sources block, which never comes through the token stream.
-                response_text = (
-                    final_values.get("answer") or response_text or "No response generated."
-                )
-                status.update(label="✅ Done", state="complete", expanded=False)
+                def set_stage(label: str | None) -> None:
+                    if label and label != _stage[0]:
+                        _stage[0] = label
+                        status.update(label=label)
+                        status.write(label)
 
-            placeholder.markdown(response_text)
+                try:
+                    for mode, payload in graph.stream(
+                        input_state, config, stream_mode=["updates", "messages"]
+                    ):
+                        if mode == "updates":
+                            # Fires as each node finishes. If the node queued a tool
+                            # call, name the tool instead of the generic node label.
+                            for node_name, node_update in (payload or {}).items():
+                                set_stage(
+                                    _tool_stage(node_update) or NODE_STAGES.get(node_name)
+                                )
+                        elif mode == "messages":
+                            chunk, metadata = payload
+                            set_stage(NODE_STAGES.get(metadata.get("langgraph_node")))
+                            if (
+                                metadata.get("langgraph_node") == "generate_answer"
+                                and hasattr(chunk, "content")
+                                and chunk.content
+                            ):
+                                response_text += chunk.content
+                                placeholder.markdown(response_text + "▌")
+                except Exception as exc:
+                    failed = True
+                    status.write(f"❌ {type(exc).__name__}: {exc}")
+                    status.update(
+                        label="Something went wrong", state="error", expanded=True
+                    )
 
-            with st.expander(f"📊 Graph state · turn {current_turn}", expanded=False):
-                st.json(state_snapshot)
+                stop_slot.empty()
 
-        st.session_state.chats[active_sid].append(
-            {
-                "role": "assistant",
-                "content": response_text,
-                "graph_state": state_snapshot,
-                "turn": current_turn,
-            }
-        )
+                if failed:
+                    response_text = response_text or (
+                        "⚠️ I hit an error before I could finish answering. "
+                        "Please try again — details are in the panel above."
+                    )
+                else:
+                    final_values = graph.get_state(config).values
+                    state_snapshot = _serialize_state(final_values)
+                    route = final_values.get("route")
+                    # Prefer the canonical answer from state: it carries the appended
+                    # Sources block, which never comes through the token stream.
+                    response_text = (
+                        final_values.get("answer")
+                        or response_text
+                        or "No response generated."
+                    )
+                    status.update(label="✅ Done", state="complete", expanded=False)
+
+                placeholder.markdown(response_text)
+
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": response_text,
+                    "graph_state": state_snapshot,
+                    "route": route,
+                    "turn": current_turn,
+                }
+                render_assistant_extras(assistant_msg)
+
+        # Committed only once the turn is done, so an interrupted run leaves no
+        # half-finished exchange behind.
+        st.session_state.chats[active_sid].append({"role": "user", "content": prompt})
+        st.session_state.chats[active_sid].append(assistant_msg)
+        st.session_state.turns[active_sid] = current_turn
 
         if is_first_message:
             st.rerun()
+
+# ── Retrieved context pane ─────────────────────────────────────────────────────
+# Rendered last so it reflects the turn that just finished; Streamlit still places
+# the output inside the column container created earlier.
+with ctx_col:
+    st.markdown("#### 🔍 Retrieved context")
+    passages = latest_retrieved_docs(active_sid)
+    if not passages:
+        st.caption(
+            "Passages used to answer will appear here once you ask a question "
+            "that needs your documents."
+        )
+    else:
+        st.caption(f"{len(passages)} passage(s) behind the latest answer")
+        for i, p in enumerate(passages, start=1):
+            label = p["title"]
+            if p["page"]:
+                label += f" · p. {p['page']}"
+            with st.expander(f"{i}. {label}", expanded=False):
+                if p["url"]:
+                    st.markdown(f"[Open source]({p['url']})")
+                if st.session_state.get("dev_mode") and p["score"] is not None:
+                    st.caption(f"Rerank score: {p['score']}")
+                st.markdown(p["text"])

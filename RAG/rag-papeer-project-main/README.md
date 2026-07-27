@@ -35,8 +35,12 @@ Papeer is a Retrieval-Augmented Generation (RAG) application built with LangGrap
 | **Multi-session UI** | Open multiple independent sessions simultaneously, each with its own paper collection and conversation history |
 | **Auto Session Naming** | Session titles are automatically generated (3–5 words) from the first message using the LLM |
 | **Multiple Paper Sources** | Load papers via file upload (PDF, TXT, MD), web URL, or ArXiv ID/title search |
-| **Graph State Inspector** | Each assistant turn exposes an expandable JSON view of the LangGraph state for debugging |
-| **Streaming Responses** | Assistant responses stream token-by-token with a cursor animation |
+| **Retrieved Context Pane** | A side panel lists the exact passages behind the latest answer, each with its source title and page number, so you can check the grounding without leaving the chat |
+| **Route Badge** | Each answer is labelled with the path that produced it — from your documents, claim-checked, or general knowledge — so the shape of a response is never a surprise |
+| **Developer Mode** | A sidebar toggle reveals the raw LangGraph state and reranker scores. Off by default, keeping the reading experience clean for non-technical users |
+| **Graph State Inspector** | Under Developer Mode, each assistant turn exposes an expandable JSON view of the LangGraph state for debugging |
+| **Streaming Responses** | Assistant responses stream token-by-token with a cursor animation, and a Stop control interrupts a run in progress |
+| **Copy to Clipboard** | Every answer can be expanded into a plain-text block with a one-click copy control |
 
 ---
 
@@ -189,6 +193,9 @@ with a document already in the store — costs nothing in embedding calls.
 | **Reranker baked into the image** | The Dockerfile pre-downloads the model at build time, so a cold container doesn't stall on the first user query |
 | **Citation pruning** | Sources the model didn't cite are dropped and the rest renumbered from 1 in a single regex pass, so a swap (3→1, 1→2) can't double-map. Listing unused sources makes an answer look less grounded than it is |
 | **Error boundary on the graph run** | Any exception during streaming is caught, surfaced in the status panel, and rendered as a readable message rather than a Streamlit traceback — the session stays usable |
+| **Deferred chat commit** | The user message and the answer are appended to the chat log together, only once a turn finishes. Interrupting a run therefore leaves no dangling user bubble with no reply — the turn simply disappears |
+| **Idempotent uploads** | Files are ingested the moment they are selected, guarded by a per-session set of processed filenames, so the reruns Streamlit fires on every widget interaction cannot re-embed the same document |
+| **Context pane reads the checkpointer** | The retrieved-passages panel is rebuilt from graph state rather than in-memory chat, so it survives a session switch or an app restart |
 | **Embedding cache** | `CacheBackedEmbeddings` writes to `./embedding_cache/` so identical text is never re-embedded across sessions — reduces OpenAI API calls and latency |
 | **Session isolation** | Each session gets its own Qdrant collection (`papeer_{session_id}`) and a separate LangGraph SQLite checkpointer thread — prevents cross-session data leakage |
 | **Graph caching** | The LangGraph graph is built once with `@st.cache_resource` and reused across all Streamlit reruns |
@@ -282,6 +289,22 @@ uv run python evaluate.py
   `rerank_score` is attached to chunk metadata and visible in the graph-state inspector.
 
 ### UI
+
+- **Wide layout with a retrieved-context pane.** The main area is now a 2:1 split — chat on the left,
+  the passages behind the latest answer on the right, each with source title and page number. The pane
+  reads from the checkpointer, so it survives session switches and restarts.
+- **Route badge** under every answer, naming the path that produced it.
+- **Developer mode toggle.** The graph-state JSON and reranker scores are now behind a sidebar switch,
+  off by default. A raw state dump under every message is useful during development and confusing for a
+  reader.
+- **Sidebar restructured.** Upload / URL / ArXiv moved into tabs; uploads ingest on selection with a
+  progress bar rather than requiring a second click on an “Add Files” button.
+- **Copy control** on each answer, and an empty-state card that adapts to whether any documents are loaded.
+- **Stop button** during generation. Clicking it interrupts the script run; since the chat log is only
+  committed once a turn completes, the interrupted turn leaves no half-finished exchange behind.
+- **Theme.** Added `.streamlit/config.toml` (dark base, teal accent) and copied it into the Docker image.
+
+### Live pipeline progress
 
 - **Live pipeline progress.** The graph run streams in combined `updates` + `messages` mode and reports
   each stage into an `st.status` panel, which collapses to “Done” on completion. When the agent queues a

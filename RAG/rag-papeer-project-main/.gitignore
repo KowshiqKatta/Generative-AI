@@ -235,6 +235,9 @@ embedding_cache/
 # reranker model weights (downloaded on first run)
 rerank_cache/
 
+# Streamlit secrets (the theme config is committed, secrets are not)
+.streamlit/secrets.toml
+
 # database
 /*.db
 /*.db-*

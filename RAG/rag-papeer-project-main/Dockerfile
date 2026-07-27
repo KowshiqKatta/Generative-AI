@@ -22,6 +22,7 @@ COPY documents/ documents/
 COPY app.py .
 COPY evaluate.py .
 COPY goldens.json .
+COPY .streamlit/ .streamlit/
 
 EXPOSE 8501
 
