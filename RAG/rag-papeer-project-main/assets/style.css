@@ -1,0 +1,358 @@
+/* ==========================================================================
+   Papeer — visual layer
+   --------------------------------------------------------------------------
+   Streamlit's defaults box everything identically. The goal here is the
+   opposite: assistant text flat on the canvas, only the user's message in a
+   container, accent reserved for state rather than decoration.
+
+   Selectors lean on Streamlit's data-testid attributes. Those can shift
+   between Streamlit versions; if a rule stops applying after an upgrade, the
+   testid is the thing to re-check. Nothing here is load-bearing — every rule
+   degrades to the stock look.
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap');
+
+:root {
+  /* Warm near-black rather than blue-grey: reads as paper, not as terminal. */
+  --pp-bg: #1A1917;
+  --pp-bg-sidebar: #151414;
+  --pp-bg-raised: #232120;
+
+  --pp-border: rgba(237, 233, 227, 0.08);
+  --pp-border-strong: rgba(237, 233, 227, 0.15);
+
+  --pp-text: #EDE9E3;
+  --pp-text-muted: #A29A90;
+  --pp-text-faint: #78716A;
+
+  /* Muted clay. Enough warmth to feel considered, low enough saturation
+     that it never competes with the text. */
+  --pp-accent: #C97B5A;
+  --pp-accent-bright: #E09B78;
+  --pp-accent-wash: rgba(201, 123, 90, 0.13);
+  --pp-accent-edge: rgba(201, 123, 90, 0.34);
+
+  --pp-radius: 14px;
+}
+
+/* ── Typography ──────────────────────────────────────────────────────────── */
+
+html, body, .stApp, [data-testid="stAppViewContainer"] {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Form controls don't inherit font-family by default. */
+button, input, textarea, select { font-family: inherit; }
+
+/* CRITICAL — do not remove.
+   Streamlit draws its icons as Material Symbols *ligatures*: the span contains
+   the literal text "smart_toy" and the icon font renders it as a glyph. Any
+   font-family rule that reaches those spans strips the ligature and the raw
+   name appears as text, blowing out every container it sits in. This guard
+   must outrank the inherited font, hence the !important throughout. */
+[data-testid="stIconMaterial"],
+[class*="material-symbols"],
+[class*="material-icons"],
+.material-symbols-rounded,
+.material-symbols-outlined {
+  font-family: 'Material Symbols Rounded', 'Material Icons' !important;
+  font-weight: normal !important;
+  font-style: normal !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+  white-space: nowrap !important;
+  word-wrap: normal !important;
+  direction: ltr !important;
+  font-feature-settings: 'liga' !important;
+  -webkit-font-feature-settings: 'liga' !important;
+}
+
+h1 {
+  font-family: 'Newsreader', Georgia, 'Times New Roman', serif !important;
+  font-size: 2.1rem !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.01em;
+  color: var(--pp-text);
+  padding-bottom: 0.2rem !important;
+}
+
+h2, h3, h4 {
+  font-weight: 550 !important;
+  letter-spacing: -0.01em;
+  color: var(--pp-text);
+}
+
+/* ── Canvas ──────────────────────────────────────────────────────────────── */
+
+.stApp { background: var(--pp-bg); }
+
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stAppDeployButton"], .stAppDeployButton { display: none; }
+
+[data-testid="stMain"] .block-container,
+.main .block-container {
+  padding-top: 3rem;
+  padding-bottom: 5rem;
+  max-width: 1500px;
+}
+
+hr, [data-testid="stDivider"] {
+  border-color: var(--pp-border) !important;
+  opacity: 1 !important;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+
+[data-testid="stSidebar"] {
+  background: var(--pp-bg-sidebar);
+  border-right: 1px solid var(--pp-border);
+}
+
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.4rem; }
+
+/* Section labels: small caps, quiet. They orient without demanding attention. */
+[data-testid="stSidebar"] h3 {
+  font-family: 'Inter', sans-serif !important;
+  font-size: 0.68rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--pp-text-faint) !important;
+  margin: 1.6rem 0 0.6rem 0 !important;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.stButton > button {
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--pp-text-muted);
+  font-weight: 450;
+  font-size: 0.9rem;
+  padding: 0.5rem 0.75rem;
+  justify-content: flex-start;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.stButton > button:hover {
+  background: rgba(237, 233, 227, 0.055);
+  color: var(--pp-text);
+  border-color: transparent;
+}
+
+.stButton > button:focus:not(:active) {
+  color: var(--pp-text);
+  border-color: var(--pp-border-strong);
+  box-shadow: none;
+}
+
+/* Primary marks the *active session* — state, not a call to action. */
+.stButton > button[kind="primary"] {
+  background: var(--pp-accent-wash);
+  border: 1px solid var(--pp-accent-edge);
+  color: var(--pp-accent-bright);
+  font-weight: 500;
+}
+
+.stButton > button[kind="primary"]:hover {
+  background: rgba(201, 123, 90, 0.2);
+  color: var(--pp-accent-bright);
+}
+
+/* ── Chat ────────────────────────────────────────────────────────────────── */
+
+/* Assistant: no container at all. This one rule does most of the work. */
+[data-testid="stChatMessage"] {
+  background: transparent !important;
+  border: none !important;
+  padding: 0.15rem 0 1.6rem 0 !important;
+  gap: 0.9rem;
+}
+
+/* User: a quiet raised card, so the turn boundary stays legible. */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+  background: var(--pp-bg-raised) !important;
+  border: 1px solid var(--pp-border) !important;
+  border-radius: var(--pp-radius);
+  padding: 0.85rem 1.1rem !important;
+  margin-bottom: 1.5rem;
+}
+
+/* Neutralise the stock saturated avatar squares. */
+[data-testid="stChatMessageAvatarUser"],
+[data-testid="stChatMessageAvatarAssistant"] {
+  background: transparent !important;
+  border: 1px solid var(--pp-border-strong) !important;
+  border-radius: 50% !important;
+  width: 27px !important;
+  height: 27px !important;
+  min-width: 27px !important;
+  font-size: 13px !important;
+  color: var(--pp-text-faint) !important;
+  box-shadow: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+}
+
+[data-testid="stChatMessage"] p,
+[data-testid="stChatMessage"] li {
+  line-height: 1.75;
+  font-size: 0.95rem;
+  color: var(--pp-text);
+}
+
+[data-testid="stChatMessage"] strong { color: #FFFFFF; font-weight: 600; }
+
+/* Sources list under an answer reads as apparatus, not body copy. */
+[data-testid="stChatMessage"] hr { margin: 1.4rem 0 0.9rem 0; }
+
+[data-testid="stChatMessage"] a {
+  color: var(--pp-accent-bright);
+  text-decoration-color: var(--pp-accent-edge);
+  text-underline-offset: 3px;
+}
+
+/* ── Chat input ──────────────────────────────────────────────────────────── */
+
+[data-testid="stChatInput"],
+[data-testid="stChatInputContainer"] {
+  background: var(--pp-bg-raised);
+  border: 1px solid var(--pp-border-strong);
+  border-radius: 16px;
+  transition: border-color 0.18s ease;
+}
+
+[data-testid="stChatInput"]:focus-within,
+[data-testid="stChatInputContainer"]:focus-within {
+  border-color: var(--pp-accent-edge);
+}
+
+[data-testid="stChatInput"] textarea { font-size: 0.94rem; }
+[data-testid="stChatInput"] textarea::placeholder { color: var(--pp-text-faint); }
+
+[data-testid="stBottomBlockContainer"] { background: transparent; }
+
+/* ── Expanders (sources, copy, context pane, status) ─────────────────────── */
+
+[data-testid="stExpander"] {
+  border: 1px solid var(--pp-border) !important;
+  border-radius: 11px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  margin-bottom: 0.45rem;
+}
+
+[data-testid="stExpander"] summary {
+  font-size: 0.85rem !important;
+  font-weight: 450;
+  color: var(--pp-text-muted) !important;
+  padding: 0.55rem 0.85rem !important;
+}
+
+[data-testid="stExpander"] summary:hover {
+  color: var(--pp-text) !important;
+  background: rgba(237, 233, 227, 0.03);
+}
+
+[data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+  font-size: 0.88rem;
+  color: var(--pp-text-muted);
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+
+.stTabs [data-baseweb="tab-list"] {
+  gap: 0.15rem;
+  border-bottom: 1px solid var(--pp-border);
+  background: transparent;
+}
+
+.stTabs [data-baseweb="tab"] {
+  color: var(--pp-text-faint);
+  font-size: 0.83rem;
+  font-weight: 450;
+  padding: 0.4rem 0.7rem;
+}
+
+.stTabs [data-baseweb="tab"]:hover { color: var(--pp-text-muted); }
+.stTabs [aria-selected="true"] { color: var(--pp-accent-bright) !important; }
+.stTabs [data-baseweb="tab-highlight"] { background: var(--pp-accent) !important; }
+.stTabs [data-baseweb="tab-border"] { background: transparent; }
+
+/* ── Alerts / empty state ────────────────────────────────────────────────── */
+
+[data-testid="stAlert"] {
+  background: var(--pp-bg-raised) !important;
+  border: 1px solid var(--pp-border) !important;
+  border-radius: var(--pp-radius) !important;
+  color: var(--pp-text-muted) !important;
+}
+
+[data-testid="stAlert"] p { font-size: 0.9rem; line-height: 1.65; }
+
+/* ── Captions, uploader, code ────────────────────────────────────────────── */
+
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {
+  color: var(--pp-text-faint) !important;
+  font-size: 0.81rem !important;
+}
+
+[data-testid="stFileUploaderDropzone"] {
+  background: transparent !important;
+  border: 1px dashed var(--pp-border-strong) !important;
+  border-radius: 12px !important;
+  padding: 1rem !important;
+}
+
+[data-testid="stFileUploaderDropzone"] button {
+  background: transparent !important;
+  border: 1px solid var(--pp-border-strong) !important;
+  color: var(--pp-text-muted) !important;
+}
+
+pre, code, [data-testid="stCode"] {
+  border-radius: 10px !important;
+  font-size: 0.84rem !important;
+}
+
+[data-testid="stTextArea"] textarea,
+[data-testid="stTextInput"] input {
+  background: var(--pp-bg-raised) !important;
+  border: 1px solid var(--pp-border) !important;
+  border-radius: 10px !important;
+  color: var(--pp-text) !important;
+  font-size: 0.88rem !important;
+}
+
+[data-testid="stTextArea"] textarea:focus,
+[data-testid="stTextInput"] input:focus {
+  border-color: var(--pp-accent-edge) !important;
+  box-shadow: none !important;
+}
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(237, 233, 227, 0.1);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(237, 233, 227, 0.19); }
+
+/* ── Context pane ────────────────────────────────────────────────────────── */
+
+.pp-pane-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--pp-text-faint);
+  margin: 0.35rem 0 0.9rem 0;
+}

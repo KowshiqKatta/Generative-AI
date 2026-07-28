@@ -1,18 +1,19 @@
-feat(ui): wide layout, context pane, dev mode, and sidebar rework
+style(ui): warm dark theme, borderless assistant messages, quieter chrome
 
-- layout="wide" with a 2:1 split; new retrieved-context pane lists the
-  passages behind the latest answer with title and page number, read
-  from the checkpointer so it survives session switches and restarts.
-- Route badge under each answer naming the path that produced it.
-- Developer mode toggle gates the graph-state JSON and rerank scores;
-  off by default.
-- Sidebar loaders moved into tabs. Uploads ingest on selection with a
-  progress bar instead of a second click.
-- Copy control per answer; empty state adapts to whether documents are
-  loaded.
-- Stop button during generation. Streamlit has no cancellation
-  primitive, so this works by interrupting the run — which required
-  moving the chat-log commit to after the turn completes. Previously an
-  interruption left a dangling user message with no reply.
-- Add .streamlit/config.toml (dark base, teal accent), copy it into the
-  image, and gitignore .streamlit/secrets.toml.
+The mint accent on near-black read as a terminal, and both message types
+were boxed identically, which made the reading surface feel like a form.
+
+- New palette: warm near-black canvas with a muted clay accent, all as
+  CSS variables in assets/style.css.
+- Assistant messages render flat on the canvas with no container; only
+  the user turn gets a raised card. Avatars become hairline circles.
+- Accent now marks the active session rather than filling call-to-action
+  buttons, so colour carries information.
+- Inter for UI, Newsreader for the H1; body line-height raised for long
+  answers.
+- Emoji removed from structural chrome; sidebar headings are small-caps
+  labels. Progress-panel emoji kept, where they carry signal.
+- Hairline borders, transparent expanders, thin scrollbars, Deploy
+  button hidden.
+- _inject_css() no-ops if the stylesheet is missing. Copy assets/ and
+  .streamlit/ into the image.

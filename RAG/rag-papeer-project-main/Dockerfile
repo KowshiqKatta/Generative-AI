@@ -23,6 +23,7 @@ COPY app.py .
 COPY evaluate.py .
 COPY goldens.json .
 COPY .streamlit/ .streamlit/
+COPY assets/ assets/
 
 EXPOSE 8501
 

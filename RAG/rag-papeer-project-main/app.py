@@ -16,6 +16,19 @@ from backend.vector_store import add_paper, list_papers
 st.set_page_config(page_title="Papeer", page_icon="📚", layout="wide")
 
 
+def _inject_css() -> None:
+    """Load the visual layer. Absent or broken CSS just falls back to stock Streamlit."""
+    css_path = Path("assets/style.css")
+    if css_path.exists():
+        st.markdown(
+            f"<style>{css_path.read_text(encoding='utf-8')}</style>",
+            unsafe_allow_html=True,
+        )
+
+
+_inject_css()
+
+
 @st.cache_resource
 def get_graph():
     return build_graph()
@@ -81,9 +94,9 @@ TOOL_STAGES = {
 
 # Shown under each answer so the reader knows why it looks the way it does.
 ROUTE_BADGES = {
-    "retrieve": "📚 Answered from your documents",
-    "verify_claim": "🕵️ Claim checked against recent literature",
-    "direct_answer": "💡 Answered from general knowledge, no retrieval",
+    "retrieve": "Answered from your documents",
+    "verify_claim": "Claim checked against recent literature",
+    "direct_answer": "Answered from general knowledge — no retrieval",
 }
 
 
@@ -214,10 +227,10 @@ def render_assistant_extras(msg: dict) -> None:
     """Route badge, copy affordance, and (in dev mode) the graph state."""
     if msg.get("route") in ROUTE_BADGES:
         st.caption(ROUTE_BADGES[msg["route"]])
-    with st.expander("📋 Copy this answer", expanded=False):
+    with st.expander("Copy this answer", expanded=False):
         st.code(msg["content"], language=None)
     if st.session_state.get("dev_mode") and msg.get("graph_state"):
-        with st.expander(f"📊 Graph state · turn {msg.get('turn', '?')}", expanded=False):
+        with st.expander(f"Graph state · turn {msg.get('turn', '?')}", expanded=False):
             st.json(msg["graph_state"])
 
 
@@ -245,13 +258,13 @@ active_sid = st.session_state.active_session_id
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    if st.button("➕ New Chat", use_container_width=True, type="primary"):
+    if st.button("＋  New chat", use_container_width=True):
         new_sid = create_session()
         st.session_state.active_session_id = new_sid
         active_sid = new_sid
         st.rerun()
 
-    st.markdown("### 💬 Sessions")
+    st.markdown("### Sessions")
     sorted_sessions = sorted(
         st.session_state.sessions_meta.values(),
         key=lambda s: s["created_at"],
@@ -271,7 +284,7 @@ with st.sidebar:
                 st.rerun()
 
     st.divider()
-    st.markdown("### 📄 Add documents")
+    st.markdown("### Add documents")
 
     tab_upload, tab_url, tab_arxiv = st.tabs(["Upload", "URL", "ArXiv"])
 
@@ -358,7 +371,7 @@ with st.sidebar:
                 st.warning("Enter a paper title or ArXiv ID.")
 
     st.divider()
-    st.markdown("### 📚 Loaded documents")
+    st.markdown("### Loaded documents")
     try:
         doc_titles = list_papers(active_sid)
     except Exception:
@@ -373,13 +386,13 @@ with st.sidebar:
 
     st.divider()
     st.toggle(
-        "🛠️ Developer mode",
+        "Developer mode",
         key="dev_mode",
         help="Show the raw LangGraph state and reranker scores under each answer.",
     )
 
 # ── Page header ────────────────────────────────────────────────────────────────
-st.title("📚 Papeer — Research Paper Assistant")
+st.title("Papeer")
 st.caption(
     "Ask questions about your papers · Verify claims against recent literature · "
     "Search the web for the latest findings"
@@ -561,7 +574,7 @@ if prompt := st.chat_input("Ask about your papers, verify a claim, or search the
 # Rendered last so it reflects the turn that just finished; Streamlit still places
 # the output inside the column container created earlier.
 with ctx_col:
-    st.markdown("#### 🔍 Retrieved context")
+    st.markdown('<div class="pp-pane-title">Retrieved context</div>', unsafe_allow_html=True)
     passages = latest_retrieved_docs(active_sid)
     if not passages:
         st.caption(
