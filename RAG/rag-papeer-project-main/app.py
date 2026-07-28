@@ -10,8 +10,8 @@ from langchain_openai import ChatOpenAI
 
 from backend.btw_handler import handle_btw
 from backend.paper_loader import load_arxiv, load_document, load_webpage
-from backend.rag_graph import build_graph, conversation_history
-from backend.vector_store import add_paper, list_papers
+from backend.rag_graph import build_graph, conversation_history, delete_session_thread
+from backend.vector_store import add_paper, delete_session as drop_session_vectors, list_papers
 
 st.set_page_config(page_title="Papeer", page_icon="📚", layout="wide")
 
@@ -197,6 +197,47 @@ def switch_session(session_id: str) -> None:
         st.session_state.turns[session_id] = turn_count
 
 
+def delete_session(session_id: str) -> None:
+    """Remove a session everywhere it exists.
+
+    Session data lives in three places: the metadata JSON, a Qdrant collection,
+    and a checkpointer thread. Dropping only the first would orphan the other
+    two — abandoned collections in particular accumulate against the Qdrant
+    free-tier quota with nothing left in the UI pointing at them.
+
+    Vector deletion is attempted first: it is the one that costs something if
+    skipped, and if it fails the session stays visible so it can be retried.
+    """
+    try:
+        drop_session_vectors(session_id)
+    except Exception as e:
+        st.error(f"Could not delete stored documents — session kept. ({e})")
+        return
+
+    try:
+        delete_session_thread(graph, session_id)
+    except Exception:
+        pass  # orphaned rows are harmless; the session is gone from the UI
+
+    st.session_state.sessions_meta.pop(session_id, None)
+    save_sessions(st.session_state.sessions_meta)
+    st.session_state.chats.pop(session_id, None)
+    st.session_state.turns.pop(session_id, None)
+    st.session_state.pop(f"processed_files_{session_id}", None)
+    st.session_state.pending_delete = None
+
+    if st.session_state.get("active_session_id") == session_id:
+        remaining = sorted(
+            st.session_state.sessions_meta.values(),
+            key=lambda s: s["created_at"],
+            reverse=True,
+        )
+        if remaining:
+            switch_session(remaining[0]["id"])
+        else:
+            st.session_state.active_session_id = create_session()
+
+
 def latest_retrieved_docs(session_id: str) -> list[dict]:
     """Passages behind the most recent answer, for the context pane.
 
@@ -273,7 +314,23 @@ with st.sidebar:
     for session in sorted_sessions:
         sid = session["id"]
         is_active = sid == st.session_state.active_session_id
-        if st.button(
+
+        # Two-step confirm: deletion drops the documents and the transcript,
+        # and neither is recoverable.
+        if st.session_state.get("pending_delete") == sid:
+            st.caption(f"Delete “{session['name']}”? Its documents and history go too.")
+            if st.button(
+                "Delete", key=f"confirm_{sid}", type="primary", use_container_width=True
+            ):
+                delete_session(sid)
+                st.rerun()
+            if st.button("Cancel", key=f"cancel_{sid}", use_container_width=True):
+                st.session_state.pending_delete = None
+                st.rerun()
+            continue
+
+        name_col, del_col = st.columns([8, 1], gap="small")
+        if name_col.button(
             session["name"],
             key=f"sess_{sid}",
             use_container_width=True,
@@ -282,6 +339,14 @@ with st.sidebar:
             if not is_active:
                 switch_session(sid)
                 st.rerun()
+        if del_col.button(
+            "×",
+            key=f"del_{sid}",
+            use_container_width=True,
+            help="Delete this session",
+        ):
+            st.session_state.pending_delete = sid
+            st.rerun()
 
     st.divider()
     st.markdown("### Add documents")

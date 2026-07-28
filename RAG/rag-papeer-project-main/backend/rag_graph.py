@@ -21,7 +21,7 @@ from tavily import TavilyClient
 
 from backend.models import ClaimVerificationResult, RelevancyDecision, RouterDecision
 from backend.reranker import candidate_pool_size, rerank
-from backend.vector_store import search as vs_search
+from backend.vector_store import list_papers, search as vs_search
 
 load_dotenv()
 
@@ -167,6 +167,12 @@ ROUTER_PROMPT = ChatPromptTemplate.from_messages([
         "  direct_answer — A stable general knowledge question answerable from training data "
         "with no retrieval needed (e.g. 'What is softmax?', 'Who invented the transformer?', "
         "'Explain backpropagation.').\n\n"
+        "Documents currently loaded in this session:\n{documents}\n\n"
+        "Weigh those titles heavily. If the query names a person, organisation, or topic "
+        "that appears in a loaded title — or plausibly sits inside that document — choose "
+        "retrieve, even when the phrasing looks like general knowledge. 'Who is <name>' is "
+        "a retrieve, not a direct_answer, when a document about <name> is loaded. A user "
+        "who has just uploaded a document is usually asking about it.\n\n"
         "When in doubt between retrieve and direct_answer, prefer retrieve.\n\n"
         "Return only the route field.",
     ),
@@ -176,10 +182,32 @@ ROUTER_PROMPT = ChatPromptTemplate.from_messages([
 router_chain = ROUTER_PROMPT | llm.with_structured_output(RouterDecision)
 
 
+def _loaded_titles(session_id: str) -> list[str]:
+    """Titles loaded in this session, or an empty list if the store is unreachable.
+
+    Both the router and the retrieval agent need this. Without it neither can
+    tell a question about the user's own documents from a general-knowledge or
+    web-lookup question.
+    """
+    try:
+        return list_papers(session_id or "")
+    except Exception:
+        return []
+
+
 def router_node(state: RAGState) -> dict:
     # Already resolved to a standalone question by contextualize_query_node.
     query = state.get("query") or state["messages"][-1].content
-    decision: RouterDecision = router_chain.invoke({"query": query})
+
+    # Without the loaded titles the router classifies blind: a "who is" question
+    # looks identical to "Who invented the transformer", and it picks
+    # direct_answer even when a document about that exact person is loaded.
+    titles = _loaded_titles(state.get("session_id", ""))
+    documents = "\n".join(f"- {t}" for t in titles) if titles else "(none loaded)"
+
+    decision: RouterDecision = router_chain.invoke(
+        {"query": query, "documents": documents}
+    )
     return {"route": decision.route}
 
 
@@ -302,6 +330,28 @@ def agent_node(state: RAGState) -> dict:
     # llm --> no tools are bounded --> tool call
     lm = llm if current_attempts >= MAX_RETRIEVAL_ATTEMPTS else retrieval_llm
     system = RETRIEVE_SYSTEM
+
+    # RETRIEVE_SYSTEM says "questions about the uploaded papers -> vector store",
+    # which is unusable unless the agent knows what is uploaded. Without this it
+    # answers a "who is" question from the web while a document about that exact
+    # person sits unread in the collection.
+    titles = _loaded_titles(state.get("session_id", ""))
+    if titles:
+        listed = "\n".join(f"- {t}" for t in titles)
+        system += (
+            f"\n\nDocuments the user has loaded into this session:\n{listed}\n\n"
+            "These are the user's own documents and are almost always why they are "
+            "here. If the question could plausibly be answered from any of them — "
+            "including a question about a person, project, or organisation named in a "
+            "title — call retrieve_from_vectorstore FIRST. Reach for web_search only "
+            "for genuinely external or time-sensitive information, or after a vector "
+            "store search has already come back empty or irrelevant."
+        )
+    else:
+        system += (
+            "\n\nNo documents are loaded in this session, so web_search is the only "
+            "source that can return anything."
+        )
     resolved = state.get("query")
     latest = state["messages"][-1].content if state["messages"] else None
     if resolved and resolved != latest:
@@ -640,6 +690,27 @@ def after_relevancy_routing(state: RAGState) -> str:
     if state.get("rewrite_count", 0) < 1:
         return "query_rewrite"
     return "generate_answer"
+
+
+def delete_session_thread(compiled_graph, session_id: str, db_path: str = "checkpoints.db") -> None:
+    """Erase a session's conversation history from the checkpointer.
+
+    Prefers the checkpointer's own API; older langgraph-checkpoint builds have
+    no `delete_thread`, so fall back to dropping the rows directly.
+    """
+    saver = getattr(compiled_graph, "checkpointer", None)
+    deleter = getattr(saver, "delete_thread", None)
+    if callable(deleter):
+        deleter(session_id)
+        return
+
+    with sqlite3.connect(db_path) as conn:
+        for table in ("checkpoints", "writes"):
+            try:
+                conn.execute(f"DELETE FROM {table} WHERE thread_id = ?", (session_id,))
+            except sqlite3.OperationalError:
+                pass  # table absent on a fresh database
+        conn.commit()
 
 
 def build_graph(db_path: str = "checkpoints.db"):

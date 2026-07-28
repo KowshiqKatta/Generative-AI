@@ -56,13 +56,23 @@ def get_vectorstore(session_id: str) -> QdrantVectorStore:
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
+# list_papers() scrolls the whole collection, and it is now called on every
+# rerun *and* on every routing decision. Titles only change on write, so cache
+# per session and invalidate explicitly.
+_title_cache: dict[str, list[str]] = {}
+
+
 def add_paper(docs: list[Document], session_id: str) -> None:
     get_vectorstore(session_id).add_documents(docs)
+    _title_cache.pop(session_id, None)
 
 
-def list_papers(session_id: str) -> list[str]:
+def list_papers(session_id: str, refresh: bool = False) -> list[str]:
+    if not refresh and session_id in _title_cache:
+        return list(_title_cache[session_id])
     collection_name = get_collection_name(session_id)
     if not qdrant_client.collection_exists(collection_name):
+        _title_cache[session_id] = []
         return []
     seen: set[str] = set()
     titles: list[str] = []
@@ -81,8 +91,22 @@ def list_papers(session_id: str) -> list[str]:
                 titles.append(title)
         if offset is None:
             break
-    return titles
+    _title_cache[session_id] = titles
+    return list(titles)
 
 
 def search(query: str, session_id: str, k: int = 4) -> list[Document]:
     return get_vectorstore(session_id).similarity_search(query, k=k)
+
+
+def delete_session(session_id: str) -> None:
+    """Drop a session's collection.
+
+    Collection-per-session gives clean isolation but leaks without this: an
+    abandoned session's vectors would sit in Qdrant forever. Safe to call when
+    the collection was never created.
+    """
+    collection_name = get_collection_name(session_id)
+    if qdrant_client.collection_exists(collection_name):
+        qdrant_client.delete_collection(collection_name)
+    _title_cache.pop(session_id, None)

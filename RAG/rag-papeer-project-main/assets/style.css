@@ -287,14 +287,88 @@ hr, [data-testid="stDivider"] {
 
 /* ── Alerts / empty state ────────────────────────────────────────────────── */
 
-[data-testid="stAlert"] {
+/* Streamlit paints the alert background on an inner container, so the outer
+   testid alone loses the specificity fight and the stock blue shows through. */
+[data-testid="stAlert"],
+[data-testid="stAlertContainer"],
+[data-testid="stNotification"],
+div[data-baseweb="notification"] {
   background: var(--pp-bg-raised) !important;
   border: 1px solid var(--pp-border) !important;
   border-radius: var(--pp-radius) !important;
-  color: var(--pp-text-muted) !important;
+  box-shadow: none !important;
 }
 
-[data-testid="stAlert"] p { font-size: 0.9rem; line-height: 1.65; }
+[data-testid="stAlert"] p,
+[data-testid="stAlertContainer"] p,
+[data-testid="stAlert"] li,
+[data-testid="stAlertContainer"] li {
+  color: var(--pp-text-muted) !important;
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+[data-testid="stAlert"] strong,
+[data-testid="stAlertContainer"] strong {
+  color: var(--pp-text) !important;
+}
+
+[data-testid="stAlert"] [data-testid="stIconMaterial"],
+[data-testid="stAlertContainer"] [data-testid="stIconMaterial"] {
+  color: var(--pp-text-faint) !important;
+}
+
+/* Session rows: name and delete control on one baseline, tight gap. */
+[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
+  align-items: center;
+  gap: 0.2rem;
+}
+
+/* Long session names truncate rather than wrapping to two lines, which was
+   making every row a different height. */
+[data-testid="stSidebar"] .stButton > button { overflow: hidden; }
+
+[data-testid="stSidebar"] .stButton > button p {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* The delete control: a ghost glyph, not a boxed button.
+   Streamlit 1.44+ stamps `st-key-<key>` onto each keyed widget's wrapper, so
+   target the delete buttons by their `del_<uuid>` keys directly. That is far
+   more precise than positional column selectors, which also matched other
+   trailing-column widgets. */
+[class*="st-key-del_"] button {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--pp-text-faint) !important;
+  opacity: 0.35;
+  padding: 0.3rem 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  justify-content: center !important;
+  font-size: 1rem !important;
+  line-height: 1 !important;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+[class*="st-key-del_"] button:hover,
+[class*="st-key-del_"] button:focus {
+  background: rgba(224, 122, 96, 0.14) !important;
+  border: none !important;
+  color: #E8836B !important;
+  opacity: 1;
+}
+
+/* Fallback for Streamlit builds that don't emit st-key-* classes. */
+[data-testid="stSidebar"] [data-testid="stColumn"]:last-child .stButton > button {
+  justify-content: center;
+  padding-left: 0.2rem;
+  padding-right: 0.2rem;
+}
 
 /* ── Captions, uploader, code ────────────────────────────────────────────── */
 

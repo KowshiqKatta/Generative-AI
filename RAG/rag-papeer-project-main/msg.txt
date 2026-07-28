@@ -1,19 +1,17 @@
-style(ui): warm dark theme, borderless assistant messages, quieter chrome
+fix(agent): tell the retrieval agent which documents are loaded
 
-The mint accent on near-black read as a terminal, and both message types
-were boxed identically, which made the reading surface feel like a form.
+Routing was fixed but the agent still chose web_search over the vector
+store for "who is <name>" while a document about that person was loaded.
+RETRIEVE_SYSTEM instructs "questions about the uploaded papers -> vector
+store" without ever naming the uploaded papers, so the rule was unusable.
 
-- New palette: warm near-black canvas with a muted clay accent, all as
-  CSS variables in assets/style.css.
-- Assistant messages render flat on the canvas with no container; only
-  the user turn gets a raised card. Avatars become hairline circles.
-- Accent now marks the active session rather than filling call-to-action
-  buttons, so colour carries information.
-- Inter for UI, Newsreader for the H1; body line-height raised for long
-  answers.
-- Emoji removed from structural chrome; sidebar headings are small-caps
-  labels. Progress-panel emoji kept, where they carry signal.
-- Hairline borders, transparent expanders, thin scrollbars, Deploy
-  button hidden.
-- _inject_css() no-ops if the stylesheet is missing. Copy assets/ and
-  .streamlit/ into the image.
+- agent_node injects the loaded titles with an explicit ordering rule:
+  vector store first when the question could plausibly be answered from a
+  loaded document, web only for external or time-sensitive information or
+  after retrieval came back empty. States plainly when nothing is loaded.
+- Extract _loaded_titles(), shared with router_node.
+- The relevancy check could not have caught this: the web results did
+  answer the question, so is_relevant was true. It grades whether the
+  context answers the query, not whether the source was right.
+- Style the delete control via st-key-del_* instead of column position;
+  the positional selector was not matching, so the button kept its box.
