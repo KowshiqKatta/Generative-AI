@@ -16,5 +16,11 @@
     "name": "Who is Kowshiq Kattamuri",
     "created_at": "2026-07-28T21:11:52.849972",
     "is_named": true
+  },
+  "37949da8-432c-45ee-a8a8-7cb5158994af": {
+    "id": "37949da8-432c-45ee-a8a8-7cb5158994af",
+    "name": "New Session",
+    "created_at": "2026-08-01T09:10:56.669852",
+    "is_named": false
   }
 }
