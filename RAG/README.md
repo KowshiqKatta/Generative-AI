@@ -5,6 +5,17 @@ every component of a RAG system from scratch, and one complete application that 
 
 Everything here runs. Every folder is independent — pick any one and start.
 
+> **Credit where it's due.** The fifteen numbered modules follow the RAG curriculum from the
+> [CampusX](https://learnwith.campusx.in/) course, which is where I learned this. The topic sequence and
+> the teaching examples are theirs; the implementations here are my own work from following along, and
+> none of the course's notes, slides, or written material is reproduced. If you find this useful, the
+> course is worth your money.
+>
+> [**Papeer**](./rag-papeer-project-main) started from the course project and went a long way past it —
+> cross-encoder reranking, inline citations with source pruning, conversation-aware query resolution,
+> per-session isolation with full cleanup, a rebuilt UI, and Docker deployment. The
+> [changelog](./rag-papeer-project-main/README.md#changelog) records what changed and why.
+
 ---
 
 ## Two ways to use this repo
