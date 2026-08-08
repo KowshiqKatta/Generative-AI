@@ -244,3 +244,4 @@ rerank_cache/
 
 # deep eval
 .deepeval/
+sessions.json

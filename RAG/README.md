@@ -82,7 +82,7 @@ setup instructions.
 
 | Module | What it covers |
 |---|---|
-| **[14_RAGAS](./14_RAGAS\(RAG_Evaluation\))** | Measuring a RAG system: faithfulness, context precision, context recall, response relevancy, noise sensitivity |
+| **[14_RAGAS](./14_RAGAS%28RAG_Evaluation%29)** | Measuring a RAG system: faithfulness, context precision, context recall, response relevancy, noise sensitivity |
 | **[15_Rag_guardrails](./15_Rag_guardrails)** | PII detection, toxicity, jailbreak attempts, topic restriction, competitor mentions, and response validation |
 
 ---
